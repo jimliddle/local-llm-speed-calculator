@@ -2,7 +2,10 @@
 
 Estimate single stream decode speed (tokens/sec) and memory fit for running large language models locally (from the memory‑bandwidth roofline, with  Mixture‑of‑Experts handling, KV cache in the per‑token read, and a tiered memory spill model).
 
-It is a single self‑contained HTML file. 
+It is a single self‑contained HTML file: https://jimliddle.github.io/local-llm-speed-calculator/
+
+<img width="744" height="370" alt="Screenshot" src="https://github.com/user-attachments/assets/3961878f-9915-4f4d-be2f-78cdaae03217" />
+
 
 Why another one? Most "will it run" estimators treat every model as dense and ignore the KV cache, so they badly mispredict modern MoE models (e.g. they'll tell you gpt‑oss‑120b runs at ~7 tok/s when it really does ~70+). This tool fixes that and is explicit about its assumptions.
 
