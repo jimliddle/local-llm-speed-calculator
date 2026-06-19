@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local LLM Speed Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: {
+                colors: {
+                    gray: { 850: '#1b2231', 900: '#111827', 950: '#0a0e17' },
+                    brand: { 300:'#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb' }
+                }
+            }}
+        }
+    </script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        input[type=range]{ accent-color:#3b82f6; }
+        input[type=number]{ -moz-appearance:textfield; }
+        input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+        .tabular{ font-variant-numeric: tabular-nums; }
+        .num{ background:#1f2937; border:1px solid #374151; border-radius:.5rem; padding:.4rem .6rem; width:100%;
+              font-family:ui-monospace,Menlo,monospace; font-size:.875rem; color:#e5e7eb; outline:none; }
+        .num:focus{ border-color:#3b82f6; box-shadow:0 0 0 2px rgba(59,130,246,.3); }
+        .num:disabled{ opacity:.4; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans min-h-screen p-4 md:p-8 selection:bg-brand-500 selection:text-white">
+
+    <div class="max-w-6xl mx-auto space-y-8">
+
+        <header class="border-b border-gray-800 pb-6">
+            <div class="flex items-center gap-2 mb-4">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="6" cy="6" r="3" fill="#6366f1"/>
+                    <circle cx="16" cy="6" r="3" fill="#6366f1"/>
+                    <circle cx="26" cy="6" r="3" fill="#6366f1"/>
+                    <circle cx="6" cy="16" r="3" fill="#6366f1"/>
+                    <circle cx="16" cy="16" r="3" fill="#0d9488"/>
+                    <circle cx="26" cy="16" r="3" fill="#6366f1"/>
+                    <circle cx="6" cy="26" r="3" fill="#6366f1"/>
+                    <circle cx="16" cy="26" r="3" fill="#6366f1"/>
+                    <circle cx="26" cy="26" r="3" fill="#6366f1"/>
+                </svg>
+                <div class="text-xl font-bold tracking-tight">
+                    <span class="text-white">pract</span><span class="text-teal-400">.ai</span>
+                </div>
+            </div>
+            <h1 class="text-3xl md:text-4xl font-bold tracking-tight">Local LLM Speed Calculator</h1>
+            <p class="text-gray-400 text-lg mt-2">Single-stream decode speed from the memory-bandwidth roofline — with correct MoE handling, KV cache in the per-token read, and a tiered memory spill model.</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+            <!-- Left: Controls -->
+            <div id="controls" class="lg:col-span-7 space-y-6">
+
+                <!-- Model -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <div class="flex items-center justify-between mb-6 gap-3">
+                        <h2 class="text-xl font-semibold flex items-center gap-2 shrink-0"><i class="ph ph-brain text-brand-500"></i> Model</h2>
+                        <select id="preset-model" class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-brand-500 outline-none max-w-[260px] truncate">
+                            <option value="">Custom model…</option>
+                        </select>
+                    </div>
+
+                    <div id="arch-badge" class="mb-5 inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1 rounded-full bg-gray-800 text-gray-300 border border-gray-700">
+                        <i class="ph ph-circle-half text-brand-400"></i><span id="arch-text">Dense</span>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <label class="text-sm font-medium text-gray-300">Total parameters (B) — memory footprint</label>
+                                <span id="val-params" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">117</span>
+                            </div>
+                            <input type="range" id="slider-params" min="0.5" max="700" step="0.1" value="117" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <label class="text-sm font-medium text-brand-400">Active parameters / token — speed</label>
+                                <span id="val-active-params" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">5.1</span>
+                            </div>
+                            <input type="range" id="slider-active-params" min="0.5" max="700" step="0.1" value="5.1" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                            <p class="text-xs text-gray-500 mt-2">Dense: active = total. MoE (gpt-oss, Llama 4, Qwen3-A22B…) reads only a fraction per token, so it runs far faster than its total size implies.</p>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-2">
+                                <label class="text-sm font-medium text-gray-300">Quantization (bits / weight)</label>
+                                <span id="val-bits" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">4.25</span>
+                            </div>
+                            <input type="range" id="slider-bits" min="2" max="16" step="0.25" value="4.25" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-xs text-gray-500 mt-2"><span>Q2</span><span>MXFP4/Q4 (4.25)</span><span>Q8</span><span>FP16</span></div>
+                        </div>
+                        <!-- Context + KV -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="flex justify-between mb-2">
+                                    <label class="text-sm font-medium text-gray-300">Context (tokens)</label>
+                                    <span id="val-context" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">4k</span>
+                                </div>
+                                <input type="range" id="slider-context" min="1" max="256" step="1" value="4" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                                <p class="text-xs text-gray-500 mt-2">Thousands of tokens (1k–256k).</p>
+                            </div>
+                            <div>
+                                <label class="text-sm font-medium text-gray-300 block mb-2">KV cache (KB/token, FP16)</label>
+                                <input type="number" id="input-kvkb" class="num" min="1" step="1" value="72">
+                                <label class="text-xs text-gray-400 flex items-center gap-2 mt-2">Precision
+                                    <select id="select-kv" class="bg-gray-800 border border-gray-700 text-xs rounded px-1.5 py-0.5">
+                                        <option value="2">FP16</option><option value="1">Q8</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 -mt-2">Auto-filled per model; editable. Reference (FP16): Llama 3 70B ≈ 320, 8B ≈ 128, gpt-oss-120b ≈ 72, Mistral 7B ≈ 64.</p>
+                    </div>
+                </div>
+
+                <!-- Hardware -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <div class="flex items-center justify-between mb-6 gap-3">
+                        <h2 class="text-xl font-semibold flex items-center gap-2 shrink-0"><i class="ph ph-graphics-card text-brand-500"></i> Hardware</h2>
+                        <select id="preset-hw" class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-brand-500 outline-none max-w-[260px] truncate">
+                            <option value="">Custom hardware…</option>
+                        </select>
+                    </div>
+
+                    <!-- Efficiency -->
+                    <div class="mb-6">
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-medium text-gray-300">Bandwidth efficiency (real-world)</label>
+                            <span id="val-efficiency" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">80 %</span>
+                        </div>
+                        <input type="range" id="slider-efficiency" min="0.4" max="0.95" step="0.01" value="0.80" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                        <p class="text-xs text-gray-500 mt-2">Fraction of theoretical bandwidth actually reached. llama.cpp ≈ 65–80%; Apple MLX ≈ 80–90%.</p>
+                    </div>
+
+                    <!-- Memory architecture -->
+                    <div class="mb-4">
+                        <label class="text-sm font-medium text-gray-300 block mb-2">Memory architecture</label>
+                        <select id="select-arch" class="num">
+                            <option value="unified">Unified — one shared pool (Apple Silicon · Ryzen AI Max / Strix Halo)</option>
+                            <option value="discrete">Discrete GPU — VRAM + separate system RAM</option>
+                        </select>
+                    </div>
+
+                    <!-- Primary / unified memory -->
+                    <div class="border border-gray-800 rounded-xl p-4 mb-4">
+                        <span id="prim-header" class="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-3"><i class="ph ph-lightning text-brand-400"></i> Unified memory</span>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div><label class="text-xs text-gray-400 block mb-1">Bandwidth (GB/s)</label><input type="number" id="in-prim-bw" class="num" value="307"></div>
+                            <div><label id="prim-cap-label" class="text-xs text-gray-400 block mb-1">Total memory (GB)</label><input type="number" id="in-prim-cap" class="num" value="96"></div>
+                        </div>
+                        <div id="cap-quick" class="flex flex-wrap items-center gap-1.5 mt-3"></div>
+                        <div id="usable-row" class="flex items-center gap-2 mt-3 flex-wrap">
+                            <span class="text-xs text-gray-400">GPU/model may use</span>
+                            <input type="number" id="in-usable-pct" class="num" style="width:60px" value="80" min="10" max="100">
+                            <span class="text-xs text-gray-400">% →</span>
+                            <span id="usable-gb" class="text-xs font-mono text-brand-400">48 GB</span>
+                        </div>
+                        <p id="prim-note" class="text-xs text-gray-500 mt-3"></p>
+                    </div>
+
+                    <!-- System RAM (discrete only) -->
+                    <div id="ram-tier" class="border border-gray-800 rounded-xl p-4 mb-4">
+                        <span class="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-3"><i class="ph ph-memory text-amber-400"></i> System RAM <span class="text-xs font-normal text-gray-500">spill tier (CPU-side)</span></span>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div><label class="text-xs text-gray-400 block mb-1">Bandwidth (GB/s)</label><input type="number" id="in-ram-bw" class="num" value="80"></div>
+                            <div><label class="text-xs text-gray-400 block mb-1">Capacity (GB)</label><input type="number" id="in-ram-cap" class="num" value="64"></div>
+                        </div>
+                    </div>
+
+                    <!-- SSD -->
+                    <div class="border border-gray-800 rounded-xl p-4">
+                        <span class="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-3"><i class="ph ph-hard-drive text-red-400"></i> SSD <span class="text-xs font-normal text-gray-500">last-resort streaming / swap</span></span>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div><label class="text-xs text-gray-400 block mb-1">Speed / drive (GB/s)</label><input type="number" id="in-ssd-bw" class="num" value="5" step="0.5"></div>
+                            <div><label class="text-xs text-gray-400 block mb-1">Number of drives</label><input type="number" id="in-ssd-n" class="num" value="1" min="1"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Results -->
+            <div class="lg:col-span-5 space-y-6">
+
+                <div class="bg-gradient-to-br from-brand-600 to-blue-900 rounded-2xl p-6 shadow-2xl relative overflow-hidden border border-brand-500/30">
+                    <div class="absolute -right-10 -top-10 text-white/5"><i class="ph-fill ph-lightning text-[12rem]"></i></div>
+                    <h3 class="text-brand-100 font-medium mb-1 relative z-10">Estimated decode speed</h3>
+                    <div class="flex items-baseline gap-2 relative z-10">
+                        <span id="out-speed" class="text-6xl font-bold text-white tracking-tighter tabular">76</span>
+                        <span class="text-xl text-brand-200 font-medium">tok/s</span>
+                        <span id="speed-flag" class="hidden ml-1 text-xs font-semibold px-2 py-1 rounded-full bg-red-500/30 text-red-100 border border-red-400/40 whitespace-nowrap">⚠ doesn't fit</span>
+                    </div>
+                    <p id="speed-note" class="text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm">
+                        Per token the engine reads the active weights plus the full KV cache. Optimistic upper bound — real stacks reach 60–90% of this. Prefill is separate and faster per token.
+                    </p>
+                </div>
+
+                <!-- Usability -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <div class="flex items-center justify-between mb-4 gap-3">
+                        <h3 class="text-gray-400 font-medium flex items-center gap-2"><i class="ph ph-seal-check text-brand-500"></i> Usability</h3>
+                        <select id="select-usecase" class="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 focus:ring-2 focus:ring-brand-500 outline-none">
+                            <option value="chat">Interactive chat</option>
+                            <option value="agentic">Agentic / coding</option>
+                            <option value="reasoning">Reasoning (long CoT)</option>
+                        </select>
+                    </div>
+                    <div id="use-badge" class="inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full mb-4 bg-green-500/15 text-green-300">
+                        <i id="use-icon" class="ph ph-rocket-launch"></i><span id="use-label">Instant</span>
+                    </div>
+                    <div class="relative h-3 rounded-full" style="background:linear-gradient(90deg,#ef4444 0%,#f97316 18%,#eab308 32%,#84cc16 58%,#22c55e 80%,#16a34a 100%)">
+                        <div id="use-marker" class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-5 bg-white rounded-full ring-2 ring-gray-900 transition-all" style="left:80%"></div>
+                    </div>
+                    <div class="flex justify-between text-[10px] text-gray-500 mt-1.5 font-mono">
+                        <span>1</span><span>4</span><span>15</span><span>50</span><span>200+</span>
+                    </div>
+                    <p id="use-note" class="text-xs text-gray-400 mt-3"></p>
+                </div>
+
+                <!-- Calibration -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <h3 class="text-gray-400 font-medium mb-4 flex items-center gap-2"><i class="ph ph-crosshair-simple text-brand-500"></i> Calibrate to your machine</h3>
+                    <div class="flex items-end gap-3">
+                        <div class="flex-1">
+                            <label class="text-xs text-gray-400 block mb-1">Your measured tok/s (at this model + context)</label>
+                            <input type="number" id="in-measured" class="num" placeholder="e.g. 76" step="0.1" min="0">
+                        </div>
+                        <button id="btn-apply" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled>Apply</button>
+                    </div>
+                    <div id="calib-out" class="mt-4 text-sm hidden">
+                        <div id="calib-box" class="flex justify-between items-center rounded-lg px-3 py-2 bg-gray-800">
+                            <span>Implied bandwidth efficiency</span>
+                            <span id="calib-eff" class="font-mono font-semibold tabular">—</span>
+                        </div>
+                        <p id="calib-note" class="text-xs text-gray-500 mt-2"></p>
+                    </div>
+                </div>
+
+                <!-- Build-up -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <h3 class="text-gray-400 font-medium mb-4">Per-token read</h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between"><span class="text-gray-300">Active weights</span><span id="out-wbytes" class="font-mono text-gray-200 tabular">2.71 GB</span></div>
+                        <div class="flex justify-between"><span class="text-gray-300">KV cache (read in full)</span><span id="out-kvbytes" class="font-mono text-gray-200 tabular">0.56 GB</span></div>
+                        <div class="border-t border-gray-800 pt-3 flex justify-between"><span class="text-gray-400">Total bytes / token</span><span id="out-pertoken" class="font-mono text-gray-200 tabular">3.27 GB</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Effective read rate</span><span id="out-effrate" class="font-mono text-brand-400 tabular">205 GB/s</span></div>
+                    </div>
+                </div>
+
+                <!-- Memory & allocation -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <h3 class="text-gray-400 font-medium mb-4">Memory & placement</h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between"><span class="text-gray-300">Model weights</span><span id="out-modelsize" class="font-mono text-gray-200 tabular">62.1 GB</span></div>
+                        <div class="flex justify-between"><span class="text-gray-300">KV cache + runtime</span><span id="out-overhead" class="font-mono text-gray-200 tabular">1.2 GB</span></div>
+                        <div class="border-t border-gray-800 pt-3 flex justify-between items-center"><span class="text-white font-medium">Total</span><span id="out-totalvram" class="font-mono font-bold text-2xl text-yellow-400 tabular">63.3 GB</span></div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="h-3 w-full rounded-full overflow-hidden flex bg-gray-800">
+                            <div id="bar-prim" class="bg-brand-500 h-full" style="width:100%"></div>
+                            <div id="bar-ram" class="bg-amber-500 h-full" style="width:0%"></div>
+                            <div id="bar-ssd" class="bg-red-500 h-full" style="width:0%"></div>
+                        </div>
+                        <div id="alloc-text" class="text-xs text-gray-400 mt-2">All weights in primary memory.</div>
+                    </div>
+
+                    <div id="fit-row" class="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-yellow-500/10">
+                        <i id="fit-icon" class="ph ph-warning text-yellow-400 text-lg"></i>
+                        <span id="out-fit" class="text-gray-200">Tight fit.</span>
+                    </div>
+                </div>
+
+                <!-- Notes -->
+                <div class="bg-gray-850 border border-gray-800 rounded-xl p-4 text-sm text-gray-400">
+                    <p class="mb-2"><strong class="text-gray-200">The model:</strong></p>
+                    <ul class="list-disc pl-4 space-y-1.5">
+                        <li>Bytes/token = <code class="text-brand-400">active_params × bits/8 + KV_cache</code></li>
+                        <li>KV is read in full every token (dense or MoE) and pinned to primary memory.</li>
+                        <li>Weights fill primary, then spill to RAM, then SSD; each tier read at its own bandwidth.</li>
+                        <li>Speed = <code class="text-brand-400">1 ÷ (weight_read_time + kv_read_time)</code></li>
+                    </ul>
+                    <p class="mt-3 text-xs text-gray-500">Ignores prefill, compute on tiny models, and software overhead. An optimistic ceiling; treat as best-case.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Live preview -->
+        <section class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl mt-8">
+            <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                <h3 class="text-gray-300 font-semibold flex items-center gap-2"><i class="ph ph-monitor-play text-brand-500"></i> What this speed feels like</h3>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <div class="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+                        <button data-pv="prose" class="pv-type px-3 py-1.5 bg-brand-600 text-white">Prose</button>
+                        <button data-pv="code" class="pv-type px-3 py-1.5 bg-gray-800 text-gray-300">Code</button>
+                        <button data-pv="thinking" class="pv-type px-3 py-1.5 bg-gray-800 text-gray-300">Thinking</button>
+                    </div>
+                    <button id="pv-play" class="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-medium flex items-center gap-1"><i class="ph ph-play"></i> Play</button>
+                    <button id="pv-restart" class="px-2.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs" title="Restart"><i class="ph ph-arrow-counter-clockwise"></i></button>
+                </div>
+            </div>
+            <div id="pv-wrap" class="rounded-xl bg-gray-950 border border-gray-800 p-4 min-h-[180px] max-h-[340px] overflow-auto">
+                <pre id="pv-out" class="whitespace-pre-wrap break-words font-mono text-sm text-gray-200 leading-relaxed m-0"></pre>
+            </div>
+            <p id="pv-meta" class="text-xs text-gray-500 mt-3 font-mono">streaming at … tok/s</p>
+            <p class="text-xs text-gray-500 mt-1">Streams a sample at the current predicted speed — change any setting and the pace updates live. Try a spilling config to feel how ~2 tok/s reads versus 100+, and switch to Thinking to see why reasoning models need the headroom. Token boundaries are approximate.</p>
+        </section>
+    </div>
+
+    <script>
+        // ---- Models: total, active, bits, moe, kvKB (FP16 KB/token; null → power-law estimate) ----
+        const MODELS = [
+            { group:"OpenAI gpt-oss (MoE, MXFP4)", items:[
+                { label:"gpt-oss-120b — 117B/5.1B (MXFP4)", total:116.8, active:5.1, bits:4.25, moe:true, kvKB:72 },
+                { label:"gpt-oss-20b — 20.9B/3.6B (MXFP4)", total:20.9, active:3.6, bits:4.25, moe:true, kvKB:48 },
+            ]},
+            { group:"Meta Llama 4 (MoE)", items:[
+                { label:"Llama 4 Scout — 109B/17B (Q4_K_M)", total:109, active:17, bits:4.85, moe:true, kvKB:null },
+                { label:"Llama 4 Maverick — 400B/17B (Q4_K_M)", total:400, active:17, bits:4.85, moe:true, kvKB:null },
+            ]},
+            { group:"Meta Llama 3 (Dense)", items:[
+                { label:"Llama 3.1 8B (Q4_K_M)", total:8, active:8, bits:4.85, moe:false, kvKB:128 },
+                { label:"Llama 3.3 70B (Q4_K_M)", total:70, active:70, bits:4.85, moe:false, kvKB:320 },
+                { label:"Llama 3.1 405B (Q4_K_M)", total:405, active:405, bits:4.85, moe:false, kvKB:504 },
+            ]},
+            { group:"Qwen3", items:[
+                { label:"Qwen3-235B-A22B — 235B/22B (Q4_K_M)", total:235, active:22, bits:4.85, moe:true, kvKB:null },
+                { label:"Qwen3-30B-A3B — 30B/3B (Q4_K_M)", total:30, active:3, bits:4.85, moe:true, kvKB:null },
+                { label:"Qwen3 32B dense (Q4_K_M)", total:32, active:32, bits:4.85, moe:false, kvKB:64 },
+                { label:"Qwen2.5 72B dense (Q4_K_M)", total:72, active:72, bits:4.85, moe:false, kvKB:null },
+            ]},
+            { group:"Gemma / Phi", items:[
+                { label:"Gemma 3 27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:null },
+                { label:"Phi-4 14B dense (Q4_K_M)", total:14, active:14, bits:4.85, moe:false, kvKB:null },
+            ]},
+            { group:"DeepSeek / Mistral (MoE)", items:[
+                { label:"DeepSeek R1 / V3 — 671B/37B (Q4_K_M)", total:671, active:37, bits:4.85, moe:true, kvKB:null },
+                { label:"Mixtral 8x7B — 47B/13B (Q4_K_M)", total:47, active:13, bits:4.85, moe:true, kvKB:128 },
+                { label:"Mixtral 8x22B — 141B/39B (Q4_K_M)", total:141, active:39, bits:4.85, moe:true, kvKB:null },
+                { label:"Mistral NeMo 12B dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:null },
+            ]},
+            { group:"Full precision (FP16)", items:[
+                { label:"gpt-oss-120b — 117B/5.1B (FP16)", total:116.8, active:5.1, bits:16, moe:true, kvKB:72 },
+                { label:"Llama 3.1 8B (FP16)", total:8, active:8, bits:16, moe:false, kvKB:128 },
+            ]},
+        ];
+
+        // ---- Hardware: prim bw/cap, unified flag, ram bw/cap, ssd, eff ----
+        const HARDWARE = [
+            { group:"Apple Silicon (unified · configurable RAM)", items:[
+                { label:"Apple M5 Max — 614 GB/s", primBw:614, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75 },
+                { label:"Apple M5 Pro — 307 GB/s", primBw:307, primCap:64, unified:true, eff:0.80, caps:[24,36,48,64], usablePct:75 },
+                { label:"Apple M5 — 153 GB/s", primBw:153, primCap:32, unified:true, eff:0.80, caps:[16,24,32], usablePct:75 },
+                { label:"Apple M4 Max — 546 GB/s", primBw:546, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75 },
+                { label:"Apple M4 Pro — 273 GB/s", primBw:273, primCap:48, unified:true, eff:0.80, caps:[24,48], usablePct:75 },
+                { label:"Apple M4 (base) — 120 GB/s", primBw:120, primCap:32, unified:true, eff:0.80, caps:[16,24,32], usablePct:75 },
+                { label:"Apple M3 Max — 400 GB/s", primBw:400, primCap:128, unified:true, eff:0.80, caps:[36,48,64,96,128], usablePct:75 },
+                { label:"Apple M2 Ultra — 800 GB/s", primBw:800, primCap:192, unified:true, eff:0.80, caps:[64,128,192], usablePct:75 },
+                { label:"Apple M3 Ultra — 819 GB/s", primBw:819, primCap:512, unified:true, eff:0.80, caps:[96,256,512], usablePct:75 },
+            ]},
+            { group:"AMD unified (Strix Halo)", items:[
+                { label:"ASUS ROG Flow Z13 / Ryzen AI Max+ 395 — 256 GB/s", primBw:256, primCap:128, unified:true, eff:0.72, caps:[32,64,128], usablePct:87 },
+            ]},
+            { group:"NVIDIA GPU (discrete · VRAM + RAM spill)", items:[
+                { label:"RTX 5090 — 1792 GB/s, 32 GB", primBw:1792, primCap:32, unified:false, ramBw:90, ramCap:96, eff:0.78, caps:[32] },
+                { label:"RTX 4090 — 1008 GB/s, 24 GB", primBw:1008, primCap:24, unified:false, ramBw:80, ramCap:64, eff:0.78, caps:[24] },
+                { label:"RTX 3090 — 936 GB/s, 24 GB", primBw:936, primCap:24, unified:false, ramBw:60, ramCap:64, eff:0.78, caps:[24] },
+            ]},
+            { group:"CPU only", items:[
+                { label:"DDR5 dual-channel CPU — ~83 GB/s", primBw:83, primCap:64, unified:true, eff:0.70, caps:[32,64,128,256], usablePct:90 },
+            ]},
+        ];
+
+        const $ = id => document.getElementById(id);
+        const els = {
+            params:$('slider-params'), active:$('slider-active-params'), bits:$('slider-bits'),
+            context:$('slider-context'), kvkb:$('input-kvkb'), kvprec:$('select-kv'),
+            eff:$('slider-efficiency'), arch:$('select-arch'), usablePct:$('in-usable-pct'),
+            primBw:$('in-prim-bw'), primCap:$('in-prim-cap'),
+            ramBw:$('in-ram-bw'), ramCap:$('in-ram-cap'),
+            ssdBw:$('in-ssd-bw'), ssdN:$('in-ssd-n'),
+            presetModel:$('preset-model'), presetHw:$('preset-hw'),
+            measured:$('in-measured'), usecase:$('select-usecase'),
+        };
+
+        let currentCaps = [48,64,96,128];   // memory config options for the selected machine
+        function renderCaps(sel){
+            const c=$('cap-quick');
+            if(!currentCaps || currentCaps.length<2){ c.innerHTML=''; return; }
+            c.innerHTML = `<span class="text-xs text-gray-500 mr-1">Configs:</span>` + currentCaps.map(v=>
+                `<button type="button" class="cap-btn text-xs px-2 py-1 rounded border ${(+v===+sel)?'bg-brand-600 border-brand-500 text-white':'bg-gray-800 border-gray-700 text-gray-300 hover:border-brand-500'}" data-cap="${v}">${v} GB</button>`).join('');
+            c.querySelectorAll('.cap-btn').forEach(b=>b.addEventListener('click',()=>{
+                els.primCap.value=b.dataset.cap; els.presetHw.value=""; renderCaps(+b.dataset.cap); update();
+            }));
+        }
+
+        // Usability tiers (edges in tok/s) by use case. Reading speed ≈ 5 tok/s.
+        const USECASES = {
+            chat:      { edges:[3,7,15,30],   note:"Calibrated to human reading speed (~5 tok/s). Above ~7 you stay ahead of your own reading; 15+ feels smooth." },
+            agentic:   { edges:[10,25,50,80], note:"Agentic & coding runs emit long outputs over many round-trips, so latency compounds — aim for 25+ to keep a loop responsive." },
+            reasoning: { edges:[15,30,60,100],note:"Reasoning models emit many hidden thinking tokens before answering, so you want 30+ for the wait to a final answer to stay bearable." },
+        };
+        const TIERS = [
+            { label:"Too slow",    icon:"ph-x-circle",      cls:"bg-red-500/15 text-red-300" },
+            { label:"Usable",      icon:"ph-check-circle",  cls:"bg-amber-500/15 text-amber-300" },
+            { label:"Comfortable", icon:"ph-check-circle",  cls:"bg-lime-500/15 text-lime-300" },
+            { label:"Snappy",      icon:"ph-lightning",     cls:"bg-green-500/15 text-green-300" },
+            { label:"Instant",     icon:"ph-rocket-launch", cls:"bg-green-500/20 text-green-300" },
+        ];
+        function tierIndex(tps, uc){ const e=USECASES[uc].edges; let i=0; while(i<e.length && tps>=e[i]) i++; return i; }
+
+        let kvOverridden = false;
+        let lastBaseTime = 0;   // per-token read time at 100% efficiency (s), for calibration
+        let liveTps = 0;        // current predicted tok/s, consumed by the live preview
+        let pvReady = false;
+        let started = false;    // gate: stay blank until the user picks a model + hardware
+
+        MODELS.forEach(g=>{ const og=document.createElement('optgroup'); og.label=g.group;
+            g.items.forEach((m,i)=>{ const o=document.createElement('option'); o.textContent=m.label; o.value=`${g.group}:${i}`; o._d=m; og.appendChild(o);}); els.presetModel.appendChild(og);});
+        HARDWARE.forEach(g=>{ const og=document.createElement('optgroup'); og.label=g.group;
+            g.items.forEach((h,i)=>{ const o=document.createElement('option'); o.textContent=h.label; o.value=`${g.group}:${i}`; o._d=h; og.appendChild(o);}); els.presetHw.appendChild(og);});
+
+        const powerlawKB = a => Math.round(54400*Math.pow(a,0.42)/1024);
+        const fmt = x => x>=100 ? x.toFixed(0) : (x>=10 ? x.toFixed(1) : x.toFixed(2));
+
+        function update(){
+            const total=+els.params.value, bits=+els.bits.value, ctxK=+els.context.value, eff=+els.eff.value;
+            let active=+els.active.value; if(active>total){ active=total; els.active.value=total; }
+
+            const unified = els.arch.value === 'unified';
+            // Unified: one physical pool; "usable for model" is a configurable slice of total.
+            // Discrete: VRAM is fully usable; a genuinely slower system-RAM tier handles spill.
+            $('ram-tier').style.display = unified ? 'none' : '';
+            $('usable-row').style.display = unified ? '' : 'none';
+            $('prim-header').innerHTML = unified
+                ? '<i class="ph ph-lightning text-brand-400"></i> Unified memory <span class="text-xs font-normal text-gray-500">GPU + CPU share one pool</span>'
+                : '<i class="ph ph-lightning text-brand-400"></i> GPU VRAM <span class="text-xs font-normal text-gray-500">dedicated, fast</span>';
+            $('prim-cap-label').textContent = unified ? 'Total memory (GB)' : 'VRAM (GB)';
+            $('prim-note').textContent = unified
+                ? 'One physical pool at one bandwidth — there is no separate slow RAM tier. The split between "VRAM" and "system RAM" is just an allocation: macOS lets the GPU use ~75% by default (raise via iogpu.wired_limit_mb); on Strix Halo it is your BIOS UMA + GTT allocation.'
+                : 'Weights beyond VRAM spill to system RAM and are computed CPU-side at its own much lower bandwidth (set below), then to SSD.';
+
+            const totalCap = Math.max(0, +els.primCap.value);
+            const usablePct = unified ? Math.min(100, Math.max(10, +els.usablePct.value)) : 100;
+            const primCap = totalCap * usablePct/100;
+            $('usable-gb').textContent = `${fmt(primCap)} GB`;
+
+            if(!started){ renderBlank(); return; }
+
+            const primBw=Math.max(1,+els.primBw.value);
+            const ramBw=unified?0:Math.max(1,+els.ramBw.value), ramCap=unified?0:Math.max(0,+els.ramCap.value);
+            const ssdBw=Math.max(0.1,(+els.ssdBw.value)*Math.max(1,+els.ssdN.value));
+
+            $('val-params').textContent = total>=100?total.toFixed(0):total.toFixed(1);
+            $('val-active-params').textContent = active>=100?active.toFixed(0):active.toFixed(1);
+            $('val-bits').textContent = bits;
+            $('val-context').textContent = `${ctxK}k`;
+            $('val-efficiency').textContent = `${Math.round(eff*100)} %`;
+
+            const isMoE = active < total - 0.001;
+            $('arch-text').textContent = isMoE ? `MoE — ${active}B active of ${total>=100?total.toFixed(0):total.toFixed(1)}B` : 'Dense — all weights per token';
+            $('arch-badge').className = "mb-5 inline-flex items-center gap-2 text-xs font-medium px-2.5 py-1 rounded-full border " +
+                (isMoE ? "bg-brand-500/15 text-brand-300 border-brand-500/40" : "bg-gray-800 text-gray-300 border-gray-700");
+
+            const kvKB = Math.max(1,+els.kvkb.value);
+            const kvPerTokGB = kvKB * 1024 * (+els.kvprec.value/2) / 1e9;
+            const kvTotalGB = kvPerTokGB * ctxK * 1000;
+
+            const W = total * bits / 8;
+            const activeW = active * bits / 8;
+
+            const primForWeights = Math.max(0, primCap - kvTotalGB);
+            const w1 = Math.min(W, primForWeights);
+            let rem = W - w1;
+            const w2 = unified ? 0 : Math.min(rem, ramCap); rem -= w2;
+            const w3 = rem;
+            const p1=W>0?w1/W:1, p2=W>0?w2/W:0, p3=W>0?w3/W:0;
+
+            // efficiency is a single linear scalar on every tier's bandwidth, so
+            // baseTime = per-token read time at 100% efficiency; tps = eff / baseTime.
+            const baseTime = activeW * (p1/primBw + p2/(ramBw||1) + p3/ssdBw) + kvTotalGB/primBw;
+            lastBaseTime = baseTime;
+            const tps = eff / baseTime;
+            liveTps = tps;
+            if(pvReady && !pv.playing) pvMeta();
+            const perTokenGB = activeW + kvTotalGB;
+            const effRate = perTokenGB * eff / baseTime;
+
+            $('out-speed').textContent = tps>=100?tps.toFixed(0):tps.toFixed(1);
+            $('out-wbytes').textContent = `${activeW.toFixed(2)} GB`;
+
+            // ---- usability verdict + gauge ----
+            const uc = els.usecase.value;
+            const ti = tierIndex(tps, uc), tier = TIERS[ti];
+            $('use-badge').className = `inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full mb-4 ${tier.cls}`;
+            $('use-icon').className = `ph ${tier.icon}`;
+            $('use-label').textContent = tier.label;
+            const readMult = tps/5; // multiples of reading speed
+            const multTxt = readMult>=1 ? `≈ ${readMult.toFixed(readMult>=10?0:1)}× reading speed` : `≈ ${(1/readMult).toFixed(1)}× slower than reading`;
+            $('use-note').textContent = `${tps>=100?tps.toFixed(0):tps.toFixed(1)} tok/s — ${multTxt}. ${USECASES[uc].note}`;
+            // log-scale marker (1 → 200 tok/s)
+            const pos = Math.max(0, Math.min(1, Math.log(Math.max(1,tps))/Math.log(200)));
+            $('use-marker').style.left = `${(pos*100).toFixed(1)}%`;
+            $('out-kvbytes').textContent = `${kvTotalGB.toFixed(2)} GB`;
+            $('out-pertoken').textContent = `${perTokenGB.toFixed(2)} GB`;
+            $('out-effrate').textContent = `${Math.round(effRate)} GB/s`;
+
+            // ---- calibration: implied efficiency = measured_tps × baseTime ----
+            const measured = parseFloat(els.measured.value);
+            const calibOut=$('calib-out'), calibBox=$('calib-box'), calibEff=$('calib-eff'), calibNote=$('calib-note'), btnApply=$('btn-apply');
+            if(measured>0 && isFinite(measured)){
+                const impliedEff = measured * baseTime;
+                calibOut.classList.remove('hidden');
+                btnApply.disabled = false;
+                calibEff.textContent = `${(impliedEff*100).toFixed(0)} %`;
+                let boxCls, note;
+                if(impliedEff > 1.15){
+                    boxCls='bg-red-500/10 text-red-300';
+                    note='Above 100% of theoretical bandwidth — an input is off. Most often the context length set here is higher than in your benchmark (which inflates the KV read). Match the context to your test, or re-check active params / bandwidth.';
+                } else if(impliedEff > 0.97){
+                    boxCls='bg-yellow-500/10 text-yellow-300';
+                    note='Right at the theoretical ceiling — plausible for a short-context MLX run. Nudge the context length down to match your benchmark for an exact fit.';
+                } else if(impliedEff < 0.40){
+                    boxCls='bg-yellow-500/10 text-yellow-300';
+                    note='Lower than typical. Either your runtime carries extra overhead, or the assumed KV / active params are too low for your setup.';
+                } else {
+                    boxCls='bg-green-500/10 text-green-300';
+                    note='Within the normal 40–95% band. Click Apply to lock this efficiency in, then change context or hardware to see calibrated predictions for your machine.';
+                }
+                calibBox.className = `flex justify-between items-center rounded-lg px-3 py-2 ${boxCls}`;
+                calibNote.textContent = note;
+            } else {
+                calibOut.classList.add('hidden');
+                btnApply.disabled = true;
+            }
+
+            const runtime=0.6, totalMem=W+kvTotalGB+runtime;
+            $('out-modelsize').textContent = `${fmt(W)} GB`;
+            $('out-overhead').textContent = `${fmt(kvTotalGB+runtime)} GB`;
+            $('out-totalvram').textContent = `${fmt(totalMem)} GB`;
+
+            $('bar-prim').style.width = `${(p1*100).toFixed(1)}%`;
+            $('bar-ram').style.width = `${(p2*100).toFixed(1)}%`;
+            $('bar-ssd').style.width = `${(p3*100).toFixed(1)}%`;
+            const parts=[];
+            if(w1>0.05) parts.push(`${fmt(w1)} GB ${unified?'unified':'VRAM'}`);
+            if(w2>0.05) parts.push(`${fmt(w2)} GB RAM`);
+            if(w3>0.05) parts.push(`${fmt(w3)} GB SSD`);
+            $('alloc-text').textContent = `Weights: ${parts.join(' · ')||'—'}. KV cache (${fmt(kvTotalGB)} GB) ${unified?'in unified memory':'in VRAM'}.`;
+
+            const totalEl=$('out-totalvram'), icon=$('fit-icon'), fitText=$('out-fit'), fitRow=$('fit-row');
+            const spillSSD = w3>0.05, spillRAM = w2>0.05;
+            const flag=$('speed-flag'), note=$('speed-note');
+            if(spillSSD){
+                flag.classList.remove('hidden');
+                note.textContent = "This model doesn't fit in memory — the figure is a slow disk-streaming (swap) estimate, not real throughput. In practice you'd pick a smaller quant or a more compact model, or move to a higher-capacity machine.";
+                note.className = "text-sm text-red-100 mt-4 relative z-10 bg-red-900/40 p-3 rounded-lg backdrop-blur-sm";
+            } else {
+                flag.classList.add('hidden');
+                note.textContent = "Per token the engine reads the active weights plus the full KV cache. Optimistic upper bound — real stacks reach 60–90% of this. Prefill is separate and faster per token.";
+                note.className = "text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm";
+            }
+            if(spillSSD){
+                totalEl.className="font-mono font-bold text-2xl text-red-400 tabular";
+                icon.className="ph ph-x-circle text-red-400 text-lg";
+                fitText.textContent="Doesn't fit — weights spill to SSD. The speed shown is a disk-streaming estimate.";
+                fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-red-500/10";
+            } else if(spillRAM){
+                totalEl.className="font-mono font-bold text-2xl text-yellow-400 tabular";
+                icon.className="ph ph-warning text-yellow-400 text-lg";
+                fitText.textContent= isMoE ? "Spilling to system RAM — modest hit for MoE (few active experts)." : "Spilling to system RAM — dense FFN layers pay the penalty.";
+                fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-yellow-500/10";
+            } else if(totalMem > primCap*0.92){
+                totalEl.className="font-mono font-bold text-2xl text-yellow-400 tabular";
+                icon.className="ph ph-warning text-yellow-400 text-lg";
+                fitText.textContent=`Tight — uses ${Math.round(totalMem/primCap*100)}% of usable memory. Leave headroom for the OS.`;
+                fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-yellow-500/10";
+            } else {
+                totalEl.className="font-mono font-bold text-2xl text-green-400 tabular";
+                icon.className="ph ph-check-circle text-green-400 text-lg";
+                fitText.textContent = unified
+                    ? "Fits in unified memory — speed is bandwidth-bound here, so changing total memory or the split won't change tok/s until the model spills."
+                    : "Fits entirely in VRAM — speed is bandwidth-bound here.";
+                fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-green-500/10";
+            }
+        }
+
+        function setKvFromModel(active, kvKB){
+            els.kvkb.value = kvKB!=null ? kvKB : powerlawKB(active);
+            kvOverridden = false;
+        }
+
+        els.active.addEventListener('input', ()=>{ els.presetModel.value=""; if(!kvOverridden) els.kvkb.value=powerlawKB(+els.active.value); update(); });
+        [els.bits, els.context].forEach(s=>s.addEventListener('input',()=>{ els.presetModel.value=""; update(); }));
+        els.kvprec.addEventListener('change', update);
+        els.kvkb.addEventListener('input', ()=>{ kvOverridden=true; update(); });
+        els.params.addEventListener('input', ()=>{
+            const prev=+(els.params.dataset.prev||els.params.value), a=+els.active.value;
+            if(Math.abs(a-prev)<0.001) els.active.value=els.params.value;
+            if(+els.active.value>+els.params.value) els.active.value=els.params.value;
+            els.params.dataset.prev=els.params.value;
+            els.presetModel.value=""; if(!kvOverridden) els.kvkb.value=powerlawKB(+els.active.value); update();
+        });
+        els.eff.addEventListener('input',()=>{ els.presetHw.value=""; update(); });
+        els.arch.addEventListener('change', update);
+        els.usablePct.addEventListener('input',()=>{ els.presetHw.value=""; update(); });
+        els.primCap.addEventListener('input',()=>{ renderCaps(+els.primCap.value); });
+        [els.primBw,els.primCap,els.ramBw,els.ramCap,els.ssdBw,els.ssdN].forEach(i=>i.addEventListener('input',()=>{ els.presetHw.value=""; update(); }));
+
+        els.presetModel.addEventListener('change', e=>{
+            const m=e.target.selectedOptions[0]?._d; if(!m) return;
+            els.params.value=m.total; els.active.value=m.active; els.bits.value=m.bits; els.params.dataset.prev=m.total;
+            setKvFromModel(m.active, m.kvKB); update();
+        });
+        els.presetHw.addEventListener('change', e=>{
+            const h=e.target.selectedOptions[0]?._d; if(!h) return;
+            els.eff.value=h.eff;
+            els.arch.value = h.unified ? 'unified' : 'discrete';
+            els.primBw.value=h.primBw; els.primCap.value=h.primCap;
+            if(h.unified){ els.usablePct.value = h.usablePct ?? 75; }
+            else { els.ramBw.value=h.ramBw??80; els.ramCap.value=h.ramCap??64; }
+            currentCaps = h.caps || [];
+            renderCaps(h.primCap);
+            update();
+        });
+
+        els.measured.addEventListener('input', update);
+        els.usecase.addEventListener('change', update);
+        $('btn-apply').addEventListener('click', ()=>{
+            const measured = parseFloat(els.measured.value);
+            if(!(measured>0) || lastBaseTime<=0) return;
+            const implied = measured * lastBaseTime;
+            els.eff.value = Math.min(0.95, Math.max(0.40, implied)).toFixed(2);
+            els.presetHw.value = "";
+            update();
+        });
+
+        // ---- blank / nil state until the user engages ----
+        function renderBlank(){
+            $('out-speed').textContent='—';
+            $('speed-flag').classList.add('hidden');
+            $('use-badge').className='inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full mb-4 bg-gray-800 text-gray-400';
+            $('use-icon').className='ph ph-cursor-click';
+            $('use-label').textContent='Awaiting input';
+            $('use-note').textContent='Select a model and hardware to estimate speed.';
+            $('use-marker').style.left='0%';
+            ['out-wbytes','out-kvbytes','out-pertoken','out-effrate','out-modelsize','out-overhead'].forEach(id=>$(id).textContent='—');
+            $('out-totalvram').textContent='—'; $('out-totalvram').className='font-mono font-bold text-2xl text-gray-500 tabular';
+            $('bar-prim').style.width='0%'; $('bar-ram').style.width='0%'; $('bar-ssd').style.width='0%';
+            $('alloc-text').textContent='—';
+            $('fit-icon').className='ph ph-cursor-click text-gray-500 text-lg';
+            $('out-fit').textContent='Pick a model and hardware to see results.';
+            $('fit-row').className='mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-gray-800/60';
+            $('speed-note').textContent='Choose a model and a hardware preset (or set the sliders) to estimate decode speed.';
+            $('speed-note').className='text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm';
+            $('calib-out').classList.add('hidden'); $('btn-apply').disabled=true;
+            liveTps=0;
+        }
+
+        // ---- live preview: stream a sample at the current predicted tok/s ----
+        const SAMPLES = {
+            prose: "Whether a model fits is a separate question from how fast it runs. The full set of weights has to sit in memory, but each token only reads the active ones, so a sparse mixture-of-experts model feels far quicker than its total size suggests. Once it fits, speed is set by memory bandwidth, and nothing else you change will move the number until the model starts spilling.",
+            code: "def estimate_tps(active_b, bits, bandwidth_gbps, efficiency=0.8):\n    \"\"\"Rough single-stream decode speed for a local LLM.\"\"\"\n    bytes_per_token = active_b * 1e9 * (bits / 8)\n    effective = bandwidth_gbps * 1e9 * efficiency\n    return effective / bytes_per_token\n\nfor model, (active, bits) in MODELS.items():\n    tps = estimate_tps(active, bits, bandwidth_gbps=307)\n    print(f\"{model:>16}: {tps:5.1f} tok/s\")",
+            thinking: "Thinking…\n\nLet me work through this step by step. The model is an MoE, so I should use the active parameter count, not the total, for the speed estimate. That's about 5 billion active out of 117 billion total.\n\nAt 4-bit that's roughly 2.7 GB read per token. Wait — I also need to add the KV cache, which is read in full every step and grows with context.\n\nSo at 4k context the per-token read is around 3 GB, and on a 300 GB/s machine at 80% efficiency that lands near 80 tokens per second. That matches the measured figure, so the estimate holds."
+        };
+        function tokenize(text){
+            const words = text.match(/\s*\S+/g) || [];
+            const toks = [];
+            for(const w of words){
+                if(w.length <= 5){ toks.push(w); }
+                else { for(let i=0;i<w.length;i+=4) toks.push(w.slice(i, i+4)); }
+            }
+            return toks;
+        }
+        const pv = { type:'prose', tokens:[], shown:0, playing:false, raf:null, last:0, acc:0, elapsed:0 };
+        function pvColor(){ return { prose:'text-gray-200', code:'text-emerald-200', thinking:'text-gray-400 italic' }[pv.type]; }
+        function pvRender(){
+            $('pv-out').className = `whitespace-pre-wrap break-words font-mono text-sm leading-relaxed m-0 ${pvColor()}`;
+            $('pv-out').textContent = pv.tokens.slice(0, pv.shown).join('') + (pv.playing ? '▋' : '');
+            const wrap=$('pv-wrap'); if(pv.playing) wrap.scrollTop = wrap.scrollHeight;
+        }
+        function pvMeta(){
+            if(pv.shown>=pv.tokens.length && pv.elapsed>0 && !pv.playing){
+                $('pv-meta').textContent = `done — ${pv.tokens.length} tokens in ${pv.elapsed.toFixed(1)}s`;
+            } else {
+                const r = liveTps>=100?liveTps.toFixed(0):liveTps.toFixed(1);
+                $('pv-meta').textContent = `streaming at ${r} tok/s · ${pv.elapsed.toFixed(1)}s · ${pv.shown}/${pv.tokens.length} tokens`;
+            }
+        }
+        function pvBtn(){ $('pv-play').innerHTML = pv.playing ? '<i class="ph ph-pause"></i> Pause' : '<i class="ph ph-play"></i> Play'; }
+        function pvLoad(type){ pv.type=type; pv.tokens=tokenize(SAMPLES[type]); pv.shown=0; pv.acc=0; pv.elapsed=0; pvRender(); pvMeta(); }
+        function pvFrame(ts){
+            if(!pv.playing) return;
+            if(!pv.last) pv.last=ts;
+            const dt=Math.min(0.1,(ts-pv.last)/1000); pv.last=ts;
+            pv.elapsed += dt;
+            pv.acc += dt * Math.max(0, liveTps);
+            if(pv.acc >= 1){ const add=Math.floor(pv.acc); pv.shown=Math.min(pv.tokens.length, pv.shown+add); pv.acc -= add; }
+            pvRender(); pvMeta();
+            if(pv.shown >= pv.tokens.length){ pv.playing=false; pvBtn(); pvRender(); pvMeta(); return; }
+            pv.raf = requestAnimationFrame(pvFrame);
+        }
+        function pvPlay(){
+            if(pv.playing || !started) return;
+            if(pv.shown >= pv.tokens.length){ pv.shown=0; pv.acc=0; pv.elapsed=0; }
+            pv.playing=true; pv.last=0; pvBtn(); pv.raf=requestAnimationFrame(pvFrame);
+        }
+        function pvPause(){ pv.playing=false; if(pv.raf) cancelAnimationFrame(pv.raf); pvBtn(); pvRender(); }
+        document.querySelectorAll('.pv-type').forEach(b=>b.addEventListener('click',()=>{
+            if(!started) return;
+            document.querySelectorAll('.pv-type').forEach(x=>{ x.className='pv-type px-3 py-1.5 bg-gray-800 text-gray-300'; });
+            b.className='pv-type px-3 py-1.5 bg-brand-600 text-white';
+            pvPause(); pvLoad(b.dataset.pv); pvPlay();
+        }));
+        $('pv-play').addEventListener('click', ()=> pv.playing ? pvPause() : pvPlay());
+        $('pv-restart').addEventListener('click', ()=>{ if(!started) return; pvPause(); pv.shown=0; pv.acc=0; pv.elapsed=0; pvRender(); pvMeta(); });
+
+        // ---- start blank; activate on the first real interaction with the controls ----
+        function activate(){
+            if(started) return;
+            started = true;
+            $('pv-play').disabled = false;
+            $('pv-wrap').classList.remove('opacity-50');
+            pvLoad('prose'); pv.shown = pv.tokens.length; pvRender();
+            update();
+        }
+        ['input','change','click'].forEach(ev => $('controls').addEventListener(ev, activate, true));
+
+        els.params.dataset.prev = els.params.value;
+        renderCaps(+els.primCap.value);
+        update();                         // renders the blank state
+
+        // preview placeholder until activated
+        $('pv-out').className = 'whitespace-pre-wrap break-words font-mono text-sm leading-relaxed m-0 text-gray-500 italic';
+        $('pv-out').textContent = 'Pick a model and hardware above, then press Play to watch a sample stream at your predicted speed.';
+        $('pv-wrap').classList.add('opacity-50');
+        $('pv-meta').textContent = 'awaiting model + hardware';
+        $('pv-play').disabled = true;
+        pvReady = true;
+    </script>
+</body>
+</html>
