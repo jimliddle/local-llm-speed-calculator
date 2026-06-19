@@ -44,7 +44,7 @@ The full model must be resident (so capacity is checked against total params), w
 
 ## Unified vs discrete memory
 
-- Unified (Apple Silicon, Strix Halo): one physical pool at one bandwidth. "VRAM vs system RAM" is only an allocation choice (the macOS wired limit, or a BIOS UMA/GTT split), not a speed boundary. Once the model fits, changing the split or total capacity does not change tok/s — speed is bandwidth‑bound. Capacity only matters for whether it fits.
+- Unified (Apple Silicon, Strix Halo): one physical pool at one bandwidth. "VRAM vs system RAM" is only an allocation choice (the macOS wired limit, or a BIOS UMA/GTT split), not a speed boundary. Once the model fits, changing the split or total capacity does not change tok/s - speed is bandwidth‑bound. Capacity only matters for whether it fits.
 
 - Discrete GPU: VRAM and system RAM are separate pools at very different speeds, so capacity does affect speed — more VRAM keeps more layers in the fast tier instead of spilling.
 
