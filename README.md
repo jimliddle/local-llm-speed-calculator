@@ -1,4 +1,4 @@
-# local-llm-speed-calculator
+# Local LLM Speed Calculator
 
 Estimate single stream decode speed (tokens/sec) and memory fit for running large language models locally (from the memory‑bandwidth roofline, with  Mixture‑of‑Experts handling, KV cache in the per‑token read, and a tiered memory spill model).
 
