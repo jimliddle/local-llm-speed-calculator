@@ -26,6 +26,8 @@
               font-family:ui-monospace,Menlo,monospace; font-size:.875rem; color:#e5e7eb; outline:none; }
         .num:focus{ border-color:#3b82f6; box-shadow:0 0 0 2px rgba(59,130,246,.3); }
         .num:disabled{ opacity:.4; }
+        #mu-table td, #mu-table th { padding:.4rem .5rem; }
+        #mu-table tr.sel { background:rgba(59,130,246,.12); }
     </style>
 </head>
 <body class="bg-gray-950 text-gray-100 font-sans min-h-screen p-4 md:p-8 selection:bg-brand-500 selection:text-white">
@@ -50,7 +52,7 @@
                 </div>
             </div>
             <h1 class="text-3xl md:text-4xl font-bold tracking-tight">Local LLM Speed Calculator</h1>
-            <p class="text-gray-400 text-lg mt-2">Single-stream decode speed from the memory-bandwidth roofline — with correct MoE handling, KV cache in the per-token read, and a tiered memory spill model.</p>
+            <p class="text-gray-400 text-lg mt-2">Decode speed from a memory-bandwidth + compute roofline — correct MoE handling, KV cache in the per-token read, tiered memory spill, multi-GPU, and batched multi-user serving.</p>
         </header>
 
         <main class="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -103,7 +105,7 @@
                                     <span id="val-context" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">4k</span>
                                 </div>
                                 <input type="range" id="slider-context" min="1" max="256" step="1" value="4" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
-                                <p class="text-xs text-gray-500 mt-2">Thousands of tokens (1k–256k).</p>
+                                <p class="text-xs text-gray-500 mt-2">Thousands of tokens (1k–256k), per user.</p>
                             </div>
                             <div>
                                 <label class="text-sm font-medium text-gray-300 block mb-2">KV cache (KB/token, FP16)</label>
@@ -115,7 +117,7 @@
                                 </label>
                             </div>
                         </div>
-                        <p class="text-xs text-gray-500 -mt-2">Auto-filled per model; editable. Reference (FP16): Llama 3 70B ≈ 320, 8B ≈ 128, gpt-oss-120b ≈ 72, Mistral 7B ≈ 64.</p>
+                        <p class="text-xs text-gray-500 -mt-2">Auto-filled per model; editable. Reference (FP16): Llama 3 70B ≈ 320, 8B ≈ 128, gpt-oss-120b ≈ 72, MiniMax M2 ≈ 248, DeepSeek/Kimi (MLA) ≈ 70. Sparse/hybrid-attention models (GLM-5.x DSA, MiniMax M3 MSA, Qwen3-Next) read only part of their KV per token, so long-context predictions for them are pessimistic here.</p>
                     </div>
                 </div>
 
@@ -135,14 +137,14 @@
                             <span id="val-efficiency" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">80 %</span>
                         </div>
                         <input type="range" id="slider-efficiency" min="0.4" max="0.95" step="0.01" value="0.80" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
-                        <p class="text-xs text-gray-500 mt-2">Fraction of theoretical bandwidth actually reached. llama.cpp ≈ 65–80%; Apple MLX ≈ 80–90%.</p>
+                        <p class="text-xs text-gray-500 mt-2">Fraction of theoretical bandwidth actually reached. llama.cpp ≈ 65–80%; Apple MLX ≈ 80–90%; CUDA (llama.cpp / exllama / vLLM) ≈ 70–85%.</p>
                     </div>
 
                     <!-- Memory architecture -->
                     <div class="mb-4">
                         <label class="text-sm font-medium text-gray-300 block mb-2">Memory architecture</label>
                         <select id="select-arch" class="num">
-                            <option value="unified">Unified — one shared pool (Apple Silicon · Ryzen AI Max / Strix Halo)</option>
+                            <option value="unified">Unified — one shared pool (Apple Silicon · Strix Halo · DGX Spark)</option>
                             <option value="discrete">Discrete GPU — VRAM + separate system RAM</option>
                         </select>
                     </div>
@@ -151,16 +153,46 @@
                     <div class="border border-gray-800 rounded-xl p-4 mb-4">
                         <span id="prim-header" class="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-3"><i class="ph ph-lightning text-brand-400"></i> Unified memory</span>
                         <div class="grid grid-cols-2 gap-3">
-                            <div><label class="text-xs text-gray-400 block mb-1">Bandwidth (GB/s)</label><input type="number" id="in-prim-bw" class="num" value="307"></div>
-                            <div><label id="prim-cap-label" class="text-xs text-gray-400 block mb-1">Total memory (GB)</label><input type="number" id="in-prim-cap" class="num" value="96"></div>
+                            <div><label class="text-xs text-gray-400 block mb-1">Bandwidth (GB/s, per device)</label><input type="number" id="in-prim-bw" class="num" value="307"></div>
+                            <div><label id="prim-cap-label" class="text-xs text-gray-400 block mb-1">Total memory (GB, per device)</label><input type="number" id="in-prim-cap" class="num" value="96"></div>
                         </div>
                         <div id="cap-quick" class="flex flex-wrap items-center gap-1.5 mt-3"></div>
+
+                        <!-- Multi-GPU (discrete only) -->
+                        <div id="gpu-row" class="grid grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">Number of GPUs</label>
+                                <input type="number" id="in-gpu-n" class="num" value="1" min="1" max="8">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">Split mode</label>
+                                <select id="select-split" class="num">
+                                    <option value="tp">Tensor parallel (vLLM, exllama) — BW adds ×~0.85</option>
+                                    <option value="layer">Layer split (llama.cpp default) — capacity adds, speed doesn't</option>
+                                </select>
+                            </div>
+                        </div>
+
                         <div id="usable-row" class="flex items-center gap-2 mt-3 flex-wrap">
                             <span class="text-xs text-gray-400">GPU/model may use</span>
                             <input type="number" id="in-usable-pct" class="num" style="width:60px" value="80" min="10" max="100">
                             <span class="text-xs text-gray-400">% →</span>
                             <span id="usable-gb" class="text-xs font-mono text-brand-400">48 GB</span>
                         </div>
+
+                        <!-- Compute ceiling -->
+                        <div class="grid grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">FP16 compute (TFLOPS, per device)</label>
+                                <input type="number" id="in-tflops" class="num" value="25" min="0" step="0.5">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">Compute utilization (%)</label>
+                                <input type="number" id="in-mfu" class="num" value="50" min="10" max="90">
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Dense tensor FP16 throughput. It rarely limits a single stream, but it caps aggregate throughput when batching many users. NVIDIA figures are published; Apple/AMD values are estimates — edit if you know yours.</p>
+
                         <p id="prim-note" class="text-xs text-gray-500 mt-3"></p>
                     </div>
 
@@ -182,6 +214,44 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Multi-user -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <h2 class="text-xl font-semibold flex items-center gap-2 mb-4"><i class="ph ph-users-three text-brand-500"></i> Multi-user serving</h2>
+                    <p class="text-xs text-gray-500 mb-4">With continuous batching (llama.cpp server <code>--parallel</code>, vLLM, SGLang, TabbyAPI) the weights are read <em>once per step</em> for the whole batch, but every user's KV cache is read and stored separately. Aggregate throughput climbs with batch size until compute or memory capacity becomes the wall. Assumes all users decoding at the context length set above; MLX/LM Studio are mostly single-stream today.</p>
+
+                    <div class="flex justify-between mb-2">
+                        <label class="text-sm font-medium text-gray-300">Concurrent users (batch size)</label>
+                        <span id="val-users" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">1</span>
+                    </div>
+                    <input type="range" id="slider-users" min="1" max="64" step="1" value="1" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+
+                    <div class="grid grid-cols-3 gap-3 mt-5 text-center">
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="mu-per" class="text-2xl font-bold text-white tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">tok/s per user</div>
+                        </div>
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="mu-agg" class="text-2xl font-bold text-brand-400 tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">aggregate tok/s</div>
+                        </div>
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="mu-kv" class="text-2xl font-bold text-gray-200 tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">total KV cache</div>
+                        </div>
+                    </div>
+                    <p id="mu-bound" class="text-xs text-gray-400 mt-3"></p>
+
+                    <div class="mt-5 overflow-x-auto">
+                        <table id="mu-table" class="w-full text-sm text-left font-mono tabular">
+                            <thead class="text-xs text-gray-400 border-b border-gray-800">
+                                <tr><th>Users</th><th>tok/s / user</th><th>Aggregate</th><th>KV total</th><th>Limit</th></tr>
+                            </thead>
+                            <tbody id="mu-body" class="text-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-3">Per-user speed falls as users share bandwidth for KV reads; aggregate rises until the compute roofline or memory capacity bites. "Spill" rows still run, slowly, from system RAM; "KV won't fit" rows can't be served at this context length.</p>
+                </div>
             </div>
 
             <!-- Right: Results -->
@@ -189,10 +259,11 @@
 
                 <div class="bg-gradient-to-br from-brand-600 to-blue-900 rounded-2xl p-6 shadow-2xl relative overflow-hidden border border-brand-500/30">
                     <div class="absolute -right-10 -top-10 text-white/5"><i class="ph-fill ph-lightning text-[12rem]"></i></div>
-                    <h3 class="text-brand-100 font-medium mb-1 relative z-10">Estimated decode speed</h3>
-                    <div class="flex items-baseline gap-2 relative z-10">
+                    <h3 class="text-brand-100 font-medium mb-1 relative z-10">Estimated decode speed <span class="text-brand-200/80 font-normal">(single stream)</span></h3>
+                    <div class="flex items-baseline gap-2 relative z-10 flex-wrap">
                         <span id="out-speed" class="text-6xl font-bold text-white tracking-tighter tabular">76</span>
                         <span class="text-xl text-brand-200 font-medium">tok/s</span>
+                        <span id="bound-flag" class="hidden ml-1 text-xs font-semibold px-2 py-1 rounded-full bg-white/15 text-brand-100 border border-white/20 whitespace-nowrap">bandwidth-bound</span>
                         <span id="speed-flag" class="hidden ml-1 text-xs font-semibold px-2 py-1 rounded-full bg-red-500/30 text-red-100 border border-red-400/40 whitespace-nowrap">⚠ doesn't fit</span>
                     </div>
                     <p id="speed-note" class="text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm">
@@ -227,7 +298,7 @@
                     <h3 class="text-gray-400 font-medium mb-4 flex items-center gap-2"><i class="ph ph-crosshair-simple text-brand-500"></i> Calibrate to your machine</h3>
                     <div class="flex items-end gap-3">
                         <div class="flex-1">
-                            <label class="text-xs text-gray-400 block mb-1">Your measured tok/s (at this model + context)</label>
+                            <label class="text-xs text-gray-400 block mb-1">Your measured tok/s (single stream, at this model + context)</label>
                             <input type="number" id="in-measured" class="num" placeholder="e.g. 76" step="0.1" min="0">
                         </div>
                         <button id="btn-apply" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled>Apply</button>
@@ -243,18 +314,19 @@
 
                 <!-- Build-up -->
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
-                    <h3 class="text-gray-400 font-medium mb-4">Per-token read</h3>
+                    <h3 class="text-gray-400 font-medium mb-4">Per-token read (single stream)</h3>
                     <div class="space-y-3 text-sm">
                         <div class="flex justify-between"><span class="text-gray-300">Active weights</span><span id="out-wbytes" class="font-mono text-gray-200 tabular">2.71 GB</span></div>
                         <div class="flex justify-between"><span class="text-gray-300">KV cache (read in full)</span><span id="out-kvbytes" class="font-mono text-gray-200 tabular">0.56 GB</span></div>
                         <div class="border-t border-gray-800 pt-3 flex justify-between"><span class="text-gray-400">Total bytes / token</span><span id="out-pertoken" class="font-mono text-gray-200 tabular">3.27 GB</span></div>
                         <div class="flex justify-between"><span class="text-gray-400">Effective read rate</span><span id="out-effrate" class="font-mono text-brand-400 tabular">205 GB/s</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Compute ceiling (batch 1)</span><span id="out-comp" class="font-mono text-gray-200 tabular">—</span></div>
                     </div>
                 </div>
 
                 <!-- Memory & allocation -->
                 <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
-                    <h3 class="text-gray-400 font-medium mb-4">Memory & placement</h3>
+                    <h3 class="text-gray-400 font-medium mb-4">Memory & placement <span class="text-xs font-normal text-gray-500">(single user)</span></h3>
                     <div class="space-y-3 text-sm">
                         <div class="flex justify-between"><span class="text-gray-300">Model weights</span><span id="out-modelsize" class="font-mono text-gray-200 tabular">62.1 GB</span></div>
                         <div class="flex justify-between"><span class="text-gray-300">KV cache + runtime</span><span id="out-overhead" class="font-mono text-gray-200 tabular">1.2 GB</span></div>
@@ -280,12 +352,14 @@
                 <div class="bg-gray-850 border border-gray-800 rounded-xl p-4 text-sm text-gray-400">
                     <p class="mb-2"><strong class="text-gray-200">The model:</strong></p>
                     <ul class="list-disc pl-4 space-y-1.5">
-                        <li>Bytes/token = <code class="text-brand-400">active_params × bits/8 + KV_cache</code></li>
-                        <li>KV is read in full every token (dense or MoE) and pinned to primary memory.</li>
+                        <li>Memory time / step = <code class="text-brand-400">(active_params × bits/8 + users × KV) ÷ effective_BW</code></li>
+                        <li>Compute time / step = <code class="text-brand-400">users × 2 × active_params ÷ (TFLOPS × utilization)</code></li>
+                        <li>Step time = <code class="text-brand-400">max(memory, compute)</code> — the roofline. Each step yields one token per user.</li>
+                        <li>KV is read in full every token per user and pinned to primary memory.</li>
                         <li>Weights fill primary, then spill to RAM, then SSD; each tier read at its own bandwidth.</li>
-                        <li>Speed = <code class="text-brand-400">1 ÷ (weight_read_time + kv_read_time)</code></li>
+                        <li>Multi-GPU tensor parallel scales bandwidth and compute at ~85%; layer split adds only capacity for a single stream.</li>
                     </ul>
-                    <p class="mt-3 text-xs text-gray-500">Ignores prefill, compute on tiny models, and software overhead. An optimistic ceiling; treat as best-case.</p>
+                    <p class="mt-3 text-xs text-gray-500">Ignores prefill, attention FLOPs (small next to weight matmuls until very long context), dequantization overhead, and scheduler/software overhead. An optimistic ceiling; treat as best-case. Apple/AMD TFLOPS defaults are rough estimates.</p>
                 </div>
             </div>
         </main>
@@ -308,7 +382,7 @@
                 <pre id="pv-out" class="whitespace-pre-wrap break-words font-mono text-sm text-gray-200 leading-relaxed m-0"></pre>
             </div>
             <p id="pv-meta" class="text-xs text-gray-500 mt-3 font-mono">streaming at … tok/s</p>
-            <p class="text-xs text-gray-500 mt-1">Streams a sample at the current predicted speed — change any setting and the pace updates live. Try a spilling config to feel how ~2 tok/s reads versus 100+, and switch to Thinking to see why reasoning models need the headroom. Token boundaries are approximate.</p>
+            <p class="text-xs text-gray-500 mt-1">Streams a sample at the current predicted single-stream speed — change any setting and the pace updates live. Try a spilling config to feel how ~2 tok/s reads versus 100+, and switch to Thinking to see why reasoning models need the headroom. Token boundaries are approximate.</p>
         </section>
     </div>
 
@@ -318,6 +392,15 @@
             { group:"OpenAI gpt-oss (MoE, MXFP4)", items:[
                 { label:"gpt-oss-120b — 117B/5.1B (MXFP4)", total:116.8, active:5.1, bits:4.25, moe:true, kvKB:72 },
                 { label:"gpt-oss-20b — 20.9B/3.6B (MXFP4)", total:20.9, active:3.6, bits:4.25, moe:true, kvKB:48 },
+            ]},
+            { group:"Frontier open-weight MoE (2026)", items:[
+                { label:"GLM-5.2 — 744B/40B (Q4_K_M)", total:744, active:40, bits:4.85, moe:true, kvKB:48 },
+                { label:"GLM-5.2 — 744B/40B (2-bit Unsloth ≈239 GB)", total:744, active:40, bits:2.6, moe:true, kvKB:48 },
+                { label:"MiniMax M3 — 428B/23B (Q4_K_M)", total:428, active:23, bits:4.85, moe:true, kvKB:null },
+                { label:"MiniMax M2 / M2.1 / M2.5 / M2.7 — 230B/10B (Q4_K_M)", total:229.9, active:9.8, bits:4.85, moe:true, kvKB:248 },
+                { label:"Kimi K2 / K2 Thinking — 1026B/32B (native INT4)", total:1026, active:32, bits:4.25, moe:true, kvKB:70 },
+                { label:"GLM-4.6 — 357B/32B (Q4_K_M)", total:357, active:32, bits:4.85, moe:true, kvKB:null },
+                { label:"GLM-4.5-Air — 106B/12B (Q4_K_M)", total:106, active:12, bits:4.85, moe:true, kvKB:null },
             ]},
             { group:"Meta Llama 4 (MoE)", items:[
                 { label:"Llama 4 Scout — 109B/17B (Q4_K_M)", total:109, active:17, bits:4.85, moe:true, kvKB:null },
@@ -329,7 +412,9 @@
                 { label:"Llama 3.1 405B (Q4_K_M)", total:405, active:405, bits:4.85, moe:false, kvKB:504 },
             ]},
             { group:"Qwen3", items:[
+                { label:"Qwen3-Coder-480B — 480B/35B (Q4_K_M)", total:480, active:35, bits:4.85, moe:true, kvKB:null },
                 { label:"Qwen3-235B-A22B — 235B/22B (Q4_K_M)", total:235, active:22, bits:4.85, moe:true, kvKB:null },
+                { label:"Qwen3-Next-80B-A3B — 80B/3B (Q4_K_M, hybrid attn)", total:80, active:3, bits:4.85, moe:true, kvKB:16 },
                 { label:"Qwen3-30B-A3B — 30B/3B (Q4_K_M)", total:30, active:3, bits:4.85, moe:true, kvKB:null },
                 { label:"Qwen3 32B dense (Q4_K_M)", total:32, active:32, bits:4.85, moe:false, kvKB:64 },
                 { label:"Qwen2.5 72B dense (Q4_K_M)", total:72, active:72, bits:4.85, moe:false, kvKB:null },
@@ -339,7 +424,7 @@
                 { label:"Phi-4 14B dense (Q4_K_M)", total:14, active:14, bits:4.85, moe:false, kvKB:null },
             ]},
             { group:"DeepSeek / Mistral (MoE)", items:[
-                { label:"DeepSeek R1 / V3 — 671B/37B (Q4_K_M)", total:671, active:37, bits:4.85, moe:true, kvKB:null },
+                { label:"DeepSeek V3 / V3.2 / R1 — 671B/37B (Q4_K_M, MLA)", total:671, active:37, bits:4.85, moe:true, kvKB:70 },
                 { label:"Mixtral 8x7B — 47B/13B (Q4_K_M)", total:47, active:13, bits:4.85, moe:true, kvKB:128 },
                 { label:"Mixtral 8x22B — 141B/39B (Q4_K_M)", total:141, active:39, bits:4.85, moe:true, kvKB:null },
                 { label:"Mistral NeMo 12B dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:null },
@@ -350,29 +435,55 @@
             ]},
         ];
 
-        // ---- Hardware: prim bw/cap, unified flag, ram bw/cap, ssd, eff ----
+        // ---- Hardware ----
+        // primBw/primCap are PER DEVICE. tflops = FP16 dense tensor per device (NVIDIA: published,
+        // FP32-accumulate figures; Apple/AMD: estimates). gpus>1 presets set count automatically.
         const HARDWARE = [
-            { group:"Apple Silicon (unified · configurable RAM)", items:[
-                { label:"Apple M5 Max — 614 GB/s", primBw:614, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75 },
-                { label:"Apple M5 Pro — 307 GB/s", primBw:307, primCap:64, unified:true, eff:0.80, caps:[24,36,48,64], usablePct:75 },
-                { label:"Apple M5 — 153 GB/s", primBw:153, primCap:32, unified:true, eff:0.80, caps:[16,24,32], usablePct:75 },
-                { label:"Apple M4 Max — 546 GB/s", primBw:546, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75 },
-                { label:"Apple M4 Pro — 273 GB/s", primBw:273, primCap:48, unified:true, eff:0.80, caps:[24,48], usablePct:75 },
-                { label:"Apple M4 (base) — 120 GB/s", primBw:120, primCap:32, unified:true, eff:0.80, caps:[16,24,32], usablePct:75 },
-                { label:"Apple M3 Max — 400 GB/s", primBw:400, primCap:128, unified:true, eff:0.80, caps:[36,48,64,96,128], usablePct:75 },
-                { label:"Apple M2 Ultra — 800 GB/s", primBw:800, primCap:192, unified:true, eff:0.80, caps:[64,128,192], usablePct:75 },
-                { label:"Apple M3 Ultra — 819 GB/s", primBw:819, primCap:512, unified:true, eff:0.80, caps:[96,256,512], usablePct:75 },
+            { group:"Mac Studio (desktop, unified)", items:[
+                { label:"Mac Studio M3 Ultra — 819 GB/s", primBw:819, primCap:256, unified:true, eff:0.82, caps:[96,256,512], usablePct:75, tflops:28 },
+                { label:"Mac Studio M2 Ultra — 800 GB/s", primBw:800, primCap:128, unified:true, eff:0.82, caps:[64,128,192], usablePct:75, tflops:27 },
+                { label:"Mac Studio M4 Max — 546 GB/s", primBw:546, primCap:64, unified:true, eff:0.82, caps:[48,64,128], usablePct:75, tflops:18 },
+                { label:"Mac Studio M4 Max (36 GB, binned) — 410 GB/s", primBw:410, primCap:36, unified:true, eff:0.82, caps:[36], usablePct:75, tflops:16 },
+                { label:"Mac Studio M2 Max — 400 GB/s", primBw:400, primCap:64, unified:true, eff:0.82, caps:[32,64,96], usablePct:75, tflops:13 },
+                { label:"Mac Studio M5 Ultra (rumored, late 2026) — ~1100 GB/s", primBw:1100, primCap:256, unified:true, eff:0.82, caps:[96,256,512], usablePct:75, tflops:100 },
+            ]},
+            { group:"Apple Silicon laptops / mini (unified)", items:[
+                { label:"Apple M5 Max — 614 GB/s", primBw:614, primCap:128, unified:true, eff:0.82, caps:[36,48,64,128], usablePct:75, tflops:50 },
+                { label:"Apple M5 Pro — 307 GB/s", primBw:307, primCap:64, unified:true, eff:0.82, caps:[24,36,48,64], usablePct:75, tflops:25 },
+                { label:"Apple M5 — 153 GB/s", primBw:153, primCap:32, unified:true, eff:0.82, caps:[16,24,32], usablePct:75, tflops:12 },
+                { label:"Apple M4 Max — 546 GB/s", primBw:546, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75, tflops:18 },
+                { label:"Apple M4 Pro — 273 GB/s", primBw:273, primCap:48, unified:true, eff:0.80, caps:[24,48], usablePct:75, tflops:9 },
+                { label:"Apple M4 (base) — 120 GB/s", primBw:120, primCap:32, unified:true, eff:0.80, caps:[16,24,32], usablePct:75, tflops:4.5 },
+                { label:"Apple M3 Max — 400 GB/s", primBw:400, primCap:128, unified:true, eff:0.80, caps:[36,48,64,96,128], usablePct:75, tflops:14 },
+            ]},
+            { group:"NVIDIA CUDA — consumer GPUs (discrete)", items:[
+                { label:"RTX 5090 — 1792 GB/s, 32 GB", primBw:1792, primCap:32, unified:false, ramBw:90, ramCap:96, eff:0.78, caps:[32], tflops:210 },
+                { label:"2× RTX 5090 (tensor parallel) — 64 GB", primBw:1792, primCap:32, unified:false, ramBw:90, ramCap:96, eff:0.78, caps:[32], tflops:210, gpus:2, split:'tp' },
+                { label:"RTX 5080 — 960 GB/s, 16 GB", primBw:960, primCap:16, unified:false, ramBw:90, ramCap:64, eff:0.78, caps:[16], tflops:113 },
+                { label:"RTX 4090 — 1008 GB/s, 24 GB", primBw:1008, primCap:24, unified:false, ramBw:80, ramCap:64, eff:0.78, caps:[24], tflops:165 },
+                { label:"2× RTX 4090 (tensor parallel) — 48 GB", primBw:1008, primCap:24, unified:false, ramBw:80, ramCap:64, eff:0.78, caps:[24], tflops:165, gpus:2, split:'tp' },
+                { label:"RTX 3090 — 936 GB/s, 24 GB", primBw:936, primCap:24, unified:false, ramBw:60, ramCap:64, eff:0.78, caps:[24], tflops:71 },
+                { label:"2× RTX 3090 (tensor parallel) — 48 GB", primBw:936, primCap:24, unified:false, ramBw:60, ramCap:64, eff:0.78, caps:[24], tflops:71, gpus:2, split:'tp' },
+                { label:"4× RTX 3090 (tensor parallel) — 96 GB", primBw:936, primCap:24, unified:false, ramBw:60, ramCap:128, eff:0.78, caps:[24], tflops:71, gpus:4, split:'tp' },
+                { label:"RTX 4060 Ti 16 GB — 288 GB/s", primBw:288, primCap:16, unified:false, ramBw:60, ramCap:32, eff:0.78, caps:[16], tflops:44 },
+            ]},
+            { group:"NVIDIA CUDA — workstation / datacenter (discrete)", items:[
+                { label:"RTX PRO 6000 Blackwell — 1792 GB/s, 96 GB", primBw:1792, primCap:96, unified:false, ramBw:90, ramCap:128, eff:0.80, caps:[96], tflops:250 },
+                { label:"RTX 6000 Ada — 960 GB/s, 48 GB", primBw:960, primCap:48, unified:false, ramBw:80, ramCap:128, eff:0.80, caps:[48], tflops:182 },
+                { label:"A100 80 GB SXM — 2039 GB/s", primBw:2039, primCap:80, unified:false, ramBw:100, ramCap:256, eff:0.80, caps:[40,80], tflops:312 },
+                { label:"H100 80 GB SXM — 3350 GB/s", primBw:3350, primCap:80, unified:false, ramBw:100, ramCap:256, eff:0.80, caps:[80], tflops:990 },
+                { label:"H200 141 GB — 4800 GB/s", primBw:4800, primCap:141, unified:false, ramBw:100, ramCap:256, eff:0.80, caps:[141], tflops:990 },
+                { label:"8× H100 SXM (tensor parallel) — 640 GB", primBw:3350, primCap:80, unified:false, ramBw:100, ramCap:512, eff:0.78, caps:[80], tflops:990, gpus:8, split:'tp' },
+            ]},
+            { group:"NVIDIA CUDA — unified memory", items:[
+                { label:"NVIDIA DGX Spark (GB10) — 273 GB/s, 128 GB", primBw:273, primCap:128, unified:true, eff:0.72, caps:[128], usablePct:90, tflops:60 },
             ]},
             { group:"AMD unified (Strix Halo)", items:[
-                { label:"ASUS ROG Flow Z13 / Ryzen AI Max+ 395 — 256 GB/s", primBw:256, primCap:128, unified:true, eff:0.72, caps:[32,64,128], usablePct:87 },
-            ]},
-            { group:"NVIDIA GPU (discrete · VRAM + RAM spill)", items:[
-                { label:"RTX 5090 — 1792 GB/s, 32 GB", primBw:1792, primCap:32, unified:false, ramBw:90, ramCap:96, eff:0.78, caps:[32] },
-                { label:"RTX 4090 — 1008 GB/s, 24 GB", primBw:1008, primCap:24, unified:false, ramBw:80, ramCap:64, eff:0.78, caps:[24] },
-                { label:"RTX 3090 — 936 GB/s, 24 GB", primBw:936, primCap:24, unified:false, ramBw:60, ramCap:64, eff:0.78, caps:[24] },
+                { label:"Ryzen AI Max+ 395 (Strix Halo) — 256 GB/s", primBw:256, primCap:128, unified:true, eff:0.72, caps:[32,64,128], usablePct:87, tflops:30 },
             ]},
             { group:"CPU only", items:[
-                { label:"DDR5 dual-channel CPU — ~83 GB/s", primBw:83, primCap:64, unified:true, eff:0.70, caps:[32,64,128,256], usablePct:90 },
+                { label:"DDR5 dual-channel desktop — ~83 GB/s", primBw:83, primCap:64, unified:true, eff:0.70, caps:[32,64,128,192], usablePct:90, tflops:1.5 },
+                { label:"Threadripper / EPYC 8-channel DDR5 — ~330 GB/s", primBw:330, primCap:256, unified:true, eff:0.65, caps:[128,256,512], usablePct:92, tflops:6 },
             ]},
         ];
 
@@ -384,11 +495,14 @@
             primBw:$('in-prim-bw'), primCap:$('in-prim-cap'),
             ramBw:$('in-ram-bw'), ramCap:$('in-ram-cap'),
             ssdBw:$('in-ssd-bw'), ssdN:$('in-ssd-n'),
+            gpuN:$('in-gpu-n'), split:$('select-split'),
+            tflops:$('in-tflops'), mfu:$('in-mfu'),
             presetModel:$('preset-model'), presetHw:$('preset-hw'),
             measured:$('in-measured'), usecase:$('select-usecase'),
+            users:$('slider-users'),
         };
 
-        let currentCaps = [48,64,96,128];   // memory config options for the selected machine
+        let currentCaps = [48,64,96,128];
         function renderCaps(sel){
             const c=$('cap-quick');
             if(!currentCaps || currentCaps.length<2){ c.innerHTML=''; return; }
@@ -399,7 +513,6 @@
             }));
         }
 
-        // Usability tiers (edges in tok/s) by use case. Reading speed ≈ 5 tok/s.
         const USECASES = {
             chat:      { edges:[3,7,15,30],   note:"Calibrated to human reading speed (~5 tok/s). Above ~7 you stay ahead of your own reading; 15+ feels smooth." },
             agentic:   { edges:[10,25,50,80], note:"Agentic & coding runs emit long outputs over many round-trips, so latency compounds — aim for 25+ to keep a loop responsive." },
@@ -415,10 +528,10 @@
         function tierIndex(tps, uc){ const e=USECASES[uc].edges; let i=0; while(i<e.length && tps>=e[i]) i++; return i; }
 
         let kvOverridden = false;
-        let lastBaseTime = 0;   // per-token read time at 100% efficiency (s), for calibration
-        let liveTps = 0;        // current predicted tok/s, consumed by the live preview
+        let lastMemBase = 0;    // per-token memory read time at 100% efficiency (s), batch 1
+        let liveTps = 0;
         let pvReady = false;
-        let started = false;    // gate: stay blank until the user picks a model + hardware
+        let started = false;
 
         MODELS.forEach(g=>{ const og=document.createElement('optgroup'); og.label=g.group;
             g.items.forEach((m,i)=>{ const o=document.createElement('option'); o.textContent=m.label; o.value=`${g.group}:${i}`; o._d=m; og.appendChild(o);}); els.presetModel.appendChild(og);});
@@ -427,34 +540,63 @@
 
         const powerlawKB = a => Math.round(54400*Math.pow(a,0.42)/1024);
         const fmt = x => x>=100 ? x.toFixed(0) : (x>=10 ? x.toFixed(1) : x.toFixed(2));
+        const fmtTps = x => x>=100 ? x.toFixed(0) : x.toFixed(1);
+
+        // Core roofline for a batch of B concurrent users. Returns null if KV can't fit
+        // in primary memory. All bandwidths already efficiency-scaled by caller.
+        function stepModel(B, p){
+            const kvAll = B * p.kvTotalGB;
+            if(kvAll > p.primCap) return null; // KV must live in fast memory
+            const primForW = p.primCap - kvAll;
+            const w1 = Math.min(p.W, primForW);
+            let rem = p.W - w1;
+            const w2 = p.unified ? 0 : Math.min(rem, p.ramCap); rem -= w2;
+            const w3 = rem;
+            const f1=p.W>0?w1/p.W:1, f2=p.W>0?w2/p.W:0, f3=p.W>0?w3/p.W:0;
+            // memory: weights read once per step (batched matmul), each tier at its bandwidth;
+            // KV read per user from primary.
+            const memBase = p.activeW*(f1/p.primBw + f2/(p.ramBw||1) + f3/p.ssdBw) + kvAll/p.primBw;
+            const memT = memBase / p.eff;
+            // compute: ~2 FLOPs per active param per token, per user
+            const compT = p.tflops>0 ? (B * 2 * p.active) / (p.tflops * 1000 * p.mfu) : 0;
+            const step = Math.max(memT, compT);
+            return { step, memT, compT, memBase, kvAll, w1, w2, w3, f1, f2, f3,
+                     bound: compT>memT ? 'compute' : 'bandwidth',
+                     spillRAM: w2>0.05, spillSSD: w3>0.05 };
+        }
 
         function update(){
             const total=+els.params.value, bits=+els.bits.value, ctxK=+els.context.value, eff=+els.eff.value;
             let active=+els.active.value; if(active>total){ active=total; els.active.value=total; }
 
             const unified = els.arch.value === 'unified';
-            // Unified: one physical pool; "usable for model" is a configurable slice of total.
-            // Discrete: VRAM is fully usable; a genuinely slower system-RAM tier handles spill.
             $('ram-tier').style.display = unified ? 'none' : '';
             $('usable-row').style.display = unified ? '' : 'none';
+            $('gpu-row').style.display = unified ? 'none' : '';
             $('prim-header').innerHTML = unified
                 ? '<i class="ph ph-lightning text-brand-400"></i> Unified memory <span class="text-xs font-normal text-gray-500">GPU + CPU share one pool</span>'
                 : '<i class="ph ph-lightning text-brand-400"></i> GPU VRAM <span class="text-xs font-normal text-gray-500">dedicated, fast</span>';
-            $('prim-cap-label').textContent = unified ? 'Total memory (GB)' : 'VRAM (GB)';
+            $('prim-cap-label').textContent = unified ? 'Total memory (GB)' : 'VRAM (GB, per GPU)';
             $('prim-note').textContent = unified
-                ? 'One physical pool at one bandwidth — there is no separate slow RAM tier. The split between "VRAM" and "system RAM" is just an allocation: macOS lets the GPU use ~75% by default (raise via iogpu.wired_limit_mb); on Strix Halo it is your BIOS UMA + GTT allocation.'
-                : 'Weights beyond VRAM spill to system RAM and are computed CPU-side at its own much lower bandwidth (set below), then to SSD.';
+                ? 'One physical pool at one bandwidth — no separate slow RAM tier. The "VRAM vs system RAM" split is just an allocation: macOS lets the GPU use ~75% by default (raise via iogpu.wired_limit_mb); on Strix Halo it is your BIOS UMA + GTT allocation; DGX Spark exposes nearly all 128 GB.'
+                : 'Weights beyond total VRAM spill to system RAM and are computed CPU-side at its own much lower bandwidth, then to SSD. Tensor parallel scales bandwidth and compute across GPUs at ~85%; llama.cpp\'s default layer split only adds capacity — each token still walks the layers one GPU at a time.';
 
-            const totalCap = Math.max(0, +els.primCap.value);
+            const gpuN = unified ? 1 : Math.max(1, Math.round(+els.gpuN.value||1));
+            const tpMode = els.split.value === 'tp';
+            const scale = gpuN===1 ? 1 : (tpMode ? gpuN*0.85 : 1);
+
+            const totalCapRaw = Math.max(0, +els.primCap.value) * gpuN;
             const usablePct = unified ? Math.min(100, Math.max(10, +els.usablePct.value)) : 100;
-            const primCap = totalCap * usablePct/100;
+            const primCap = totalCapRaw * usablePct/100;
             $('usable-gb').textContent = `${fmt(primCap)} GB`;
 
             if(!started){ renderBlank(); return; }
 
-            const primBw=Math.max(1,+els.primBw.value);
-            const ramBw=unified?0:Math.max(1,+els.ramBw.value), ramCap=unified?0:Math.max(0,+els.ramCap.value);
-            const ssdBw=Math.max(0.1,(+els.ssdBw.value)*Math.max(1,+els.ssdN.value));
+            const primBw = Math.max(1,+els.primBw.value) * scale;
+            const ramBw = unified?0:Math.max(1,+els.ramBw.value), ramCap = unified?0:Math.max(0,+els.ramCap.value);
+            const ssdBw = Math.max(0.1,(+els.ssdBw.value)*Math.max(1,+els.ssdN.value));
+            const tflops = Math.max(0,+els.tflops.value) * scale;
+            const mfu = Math.min(0.9, Math.max(0.1, (+els.mfu.value||50)/100));
 
             $('val-params').textContent = total>=100?total.toFixed(0):total.toFixed(1);
             $('val-active-params').textContent = active>=100?active.toFixed(0):active.toFixed(1);
@@ -474,52 +616,57 @@
             const W = total * bits / 8;
             const activeW = active * bits / 8;
 
-            const primForWeights = Math.max(0, primCap - kvTotalGB);
-            const w1 = Math.min(W, primForWeights);
-            let rem = W - w1;
-            const w2 = unified ? 0 : Math.min(rem, ramCap); rem -= w2;
-            const w3 = rem;
-            const p1=W>0?w1/W:1, p2=W>0?w2/W:0, p3=W>0?w3/W:0;
+            const P = { W, activeW, active, kvTotalGB, primBw, primCap, ramBw, ramCap, ssdBw, eff, tflops, mfu, unified };
 
-            // efficiency is a single linear scalar on every tier's bandwidth, so
-            // baseTime = per-token read time at 100% efficiency; tps = eff / baseTime.
-            const baseTime = activeW * (p1/primBw + p2/(ramBw||1) + p3/ssdBw) + kvTotalGB/primBw;
-            lastBaseTime = baseTime;
-            const tps = eff / baseTime;
+            // ---- single stream ----
+            const s1 = stepModel(1, P);
+            const infeasible1 = !s1;
+            const tps = s1 ? 1/s1.step : 0;
+            lastMemBase = s1 ? s1.memBase : 0;
             liveTps = tps;
             if(pvReady && !pv.playing) pvMeta();
+
             const perTokenGB = activeW + kvTotalGB;
-            const effRate = perTokenGB * eff / baseTime;
+            const effRate = s1 ? perTokenGB / s1.step : 0;
 
-            $('out-speed').textContent = tps>=100?tps.toFixed(0):tps.toFixed(1);
+            $('out-speed').textContent = infeasible1 ? '—' : fmtTps(tps);
             $('out-wbytes').textContent = `${activeW.toFixed(2)} GB`;
+            $('out-kvbytes').textContent = `${kvTotalGB.toFixed(2)} GB`;
+            $('out-pertoken').textContent = `${perTokenGB.toFixed(2)} GB`;
+            $('out-effrate').textContent = s1 ? `${Math.round(effRate)} GB/s` : '—';
+            $('out-comp').textContent = tflops>0 ? `${fmtTps((tflops*1000*mfu)/(2*active))} tok/s` : 'off';
 
-            // ---- usability verdict + gauge ----
+            const boundFlag = $('bound-flag');
+            if(s1 && !s1.spillSSD){
+                boundFlag.classList.remove('hidden');
+                boundFlag.textContent = s1.bound==='compute' ? 'compute-bound' : 'bandwidth-bound';
+            } else boundFlag.classList.add('hidden');
+
+            // ---- usability ----
             const uc = els.usecase.value;
             const ti = tierIndex(tps, uc), tier = TIERS[ti];
             $('use-badge').className = `inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full mb-4 ${tier.cls}`;
             $('use-icon').className = `ph ${tier.icon}`;
             $('use-label').textContent = tier.label;
-            const readMult = tps/5; // multiples of reading speed
-            const multTxt = readMult>=1 ? `≈ ${readMult.toFixed(readMult>=10?0:1)}× reading speed` : `≈ ${(1/readMult).toFixed(1)}× slower than reading`;
-            $('use-note').textContent = `${tps>=100?tps.toFixed(0):tps.toFixed(1)} tok/s — ${multTxt}. ${USECASES[uc].note}`;
-            // log-scale marker (1 → 200 tok/s)
+            const readMult = tps/5;
+            const multTxt = readMult>=1 ? `≈ ${readMult.toFixed(readMult>=10?0:1)}× reading speed` : `≈ ${(1/Math.max(readMult,1e-6)).toFixed(1)}× slower than reading`;
+            $('use-note').textContent = `${fmtTps(tps)} tok/s — ${multTxt}. ${USECASES[uc].note}`;
             const pos = Math.max(0, Math.min(1, Math.log(Math.max(1,tps))/Math.log(200)));
             $('use-marker').style.left = `${(pos*100).toFixed(1)}%`;
-            $('out-kvbytes').textContent = `${kvTotalGB.toFixed(2)} GB`;
-            $('out-pertoken').textContent = `${perTokenGB.toFixed(2)} GB`;
-            $('out-effrate').textContent = `${Math.round(effRate)} GB/s`;
 
-            // ---- calibration: implied efficiency = measured_tps × baseTime ----
+            // ---- calibration ----
             const measured = parseFloat(els.measured.value);
             const calibOut=$('calib-out'), calibBox=$('calib-box'), calibEff=$('calib-eff'), calibNote=$('calib-note'), btnApply=$('btn-apply');
-            if(measured>0 && isFinite(measured)){
-                const impliedEff = measured * baseTime;
+            if(measured>0 && isFinite(measured) && lastMemBase>0){
+                const impliedEff = measured * lastMemBase;
                 calibOut.classList.remove('hidden');
                 btnApply.disabled = false;
                 calibEff.textContent = `${(impliedEff*100).toFixed(0)} %`;
                 let boxCls, note;
-                if(impliedEff > 1.15){
+                if(s1 && s1.bound==='compute'){
+                    boxCls='bg-yellow-500/10 text-yellow-300';
+                    note='This config is predicted compute-bound at batch 1, so measured speed reflects the compute ceiling, not bandwidth. Calibration assumes bandwidth-bound decode — raise TFLOPS or pick a larger model to calibrate bandwidth.';
+                } else if(impliedEff > 1.15){
                     boxCls='bg-red-500/10 text-red-300';
                     note='Above 100% of theoretical bandwidth — an input is off. Most often the context length set here is higher than in your benchmark (which inflates the KV read). Match the context to your test, or re-check active params / bandwidth.';
                 } else if(impliedEff > 0.97){
@@ -539,36 +686,46 @@
                 btnApply.disabled = true;
             }
 
+            // ---- memory & placement (single user) ----
             const runtime=0.6, totalMem=W+kvTotalGB+runtime;
             $('out-modelsize').textContent = `${fmt(W)} GB`;
             $('out-overhead').textContent = `${fmt(kvTotalGB+runtime)} GB`;
             $('out-totalvram').textContent = `${fmt(totalMem)} GB`;
 
-            $('bar-prim').style.width = `${(p1*100).toFixed(1)}%`;
-            $('bar-ram').style.width = `${(p2*100).toFixed(1)}%`;
-            $('bar-ssd').style.width = `${(p3*100).toFixed(1)}%`;
+            const f1 = s1?s1.f1:0, f2 = s1?s1.f2:0, f3 = s1?s1.f3:1;
+            $('bar-prim').style.width = `${(f1*100).toFixed(1)}%`;
+            $('bar-ram').style.width = `${(f2*100).toFixed(1)}%`;
+            $('bar-ssd').style.width = `${(f3*100).toFixed(1)}%`;
             const parts=[];
-            if(w1>0.05) parts.push(`${fmt(w1)} GB ${unified?'unified':'VRAM'}`);
-            if(w2>0.05) parts.push(`${fmt(w2)} GB RAM`);
-            if(w3>0.05) parts.push(`${fmt(w3)} GB SSD`);
-            $('alloc-text').textContent = `Weights: ${parts.join(' · ')||'—'}. KV cache (${fmt(kvTotalGB)} GB) ${unified?'in unified memory':'in VRAM'}.`;
+            if(s1){
+                if(s1.w1>0.05) parts.push(`${fmt(s1.w1)} GB ${unified?'unified':'VRAM'}`);
+                if(s1.w2>0.05) parts.push(`${fmt(s1.w2)} GB RAM`);
+                if(s1.w3>0.05) parts.push(`${fmt(s1.w3)} GB SSD`);
+            }
+            $('alloc-text').textContent = s1
+                ? `Weights: ${parts.join(' · ')||'—'}. KV cache (${fmt(kvTotalGB)} GB) ${unified?'in unified memory':'in VRAM'}.${gpuN>1?` Across ${gpuN} GPUs.`:''}`
+                : 'KV cache alone exceeds primary memory at this context length.';
 
             const totalEl=$('out-totalvram'), icon=$('fit-icon'), fitText=$('out-fit'), fitRow=$('fit-row');
-            const spillSSD = w3>0.05, spillRAM = w2>0.05;
+            const spillSSD = s1?s1.spillSSD:true, spillRAM = s1?s1.spillRAM:false;
             const flag=$('speed-flag'), note=$('speed-note');
-            if(spillSSD){
+            if(infeasible1 || spillSSD){
                 flag.classList.remove('hidden');
-                note.textContent = "This model doesn't fit in memory — the figure is a slow disk-streaming (swap) estimate, not real throughput. In practice you'd pick a smaller quant or a more compact model, or move to a higher-capacity machine.";
+                note.textContent = infeasible1
+                    ? "The KV cache alone doesn't fit in primary memory at this context length — reduce context, quantize KV to Q8, or use a bigger machine."
+                    : "This model doesn't fit in memory — the figure is a slow disk-streaming (swap) estimate, not real throughput. In practice you'd pick a smaller quant or a more compact model, or move to a higher-capacity machine.";
                 note.className = "text-sm text-red-100 mt-4 relative z-10 bg-red-900/40 p-3 rounded-lg backdrop-blur-sm";
             } else {
                 flag.classList.add('hidden');
-                note.textContent = "Per token the engine reads the active weights plus the full KV cache. Optimistic upper bound — real stacks reach 60–90% of this. Prefill is separate and faster per token.";
+                note.textContent = s1.bound==='compute'
+                    ? "Compute-bound: this model is small enough (or the GPU fast enough) that matmul throughput, not memory bandwidth, sets the pace. Optimistic upper bound — real stacks reach 60–90% of this."
+                    : "Per token the engine reads the active weights plus the full KV cache. Optimistic upper bound — real stacks reach 60–90% of this. Prefill is separate and faster per token.";
                 note.className = "text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm";
             }
-            if(spillSSD){
+            if(infeasible1 || spillSSD){
                 totalEl.className="font-mono font-bold text-2xl text-red-400 tabular";
                 icon.className="ph ph-x-circle text-red-400 text-lg";
-                fitText.textContent="Doesn't fit — weights spill to SSD. The speed shown is a disk-streaming estimate.";
+                fitText.textContent = infeasible1 ? "KV cache doesn't fit in primary memory at this context." : "Doesn't fit — weights spill to SSD. The speed shown is a disk-streaming estimate.";
                 fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-red-500/10";
             } else if(spillRAM){
                 totalEl.className="font-mono font-bold text-2xl text-yellow-400 tabular";
@@ -588,6 +745,38 @@
                     : "Fits entirely in VRAM — speed is bandwidth-bound here.";
                 fitRow.className="mt-4 flex items-center gap-2 text-sm rounded-lg px-3 py-2 bg-green-500/10";
             }
+
+            // ---- multi-user ----
+            const B = Math.max(1, Math.round(+els.users.value));
+            $('val-users').textContent = B;
+            const sB = stepModel(B, P);
+            if(sB){
+                $('mu-per').textContent = fmtTps(1/sB.step);
+                $('mu-agg').textContent = fmtTps(B/sB.step);
+                $('mu-kv').textContent = `${fmt(sB.kvAll)} GB`;
+                const boundTxt = sB.spillSSD ? 'weights spilled to SSD — not practical for serving'
+                    : sB.spillRAM ? 'weights partly in system RAM — every step pays the slow tier'
+                    : sB.bound==='compute' ? `compute-bound — the ${Math.round(tflops)} TFLOPS ceiling caps aggregate throughput; more users won't add much`
+                    : 'bandwidth-bound — aggregate still scales with more users (weights amortize across the batch)';
+                $('mu-bound').textContent = `At ${B} user${B>1?'s':''}: ${boundTxt}.`;
+            } else {
+                $('mu-per').textContent = '—'; $('mu-agg').textContent = '—';
+                $('mu-kv').textContent = `${fmt(B*kvTotalGB)} GB`;
+                $('mu-bound').textContent = `At ${B} users the combined KV cache exceeds primary memory — shorten context, quantize KV, or add memory.`;
+            }
+
+            const rows = [1,2,4,8,16,32,64];
+            if(!rows.includes(B)) { rows.push(B); rows.sort((a,b)=>a-b); }
+            $('mu-body').innerHTML = rows.map(n=>{
+                const s = stepModel(n, P);
+                const sel = n===B ? ' class="sel"' : '';
+                if(!s) return `<tr${sel}><td>${n}</td><td class="text-red-400" colspan="2">KV won't fit</td><td>${fmt(n*kvTotalGB)} GB</td><td class="text-red-400">memory</td></tr>`;
+                const lim = s.spillSSD ? '<span class="text-red-400">SSD spill</span>'
+                    : s.spillRAM ? '<span class="text-amber-400">RAM spill</span>'
+                    : s.bound==='compute' ? '<span class="text-purple-300">compute</span>'
+                    : '<span class="text-brand-400">bandwidth</span>';
+                return `<tr${sel}><td>${n}</td><td>${fmtTps(1/s.step)}</td><td class="text-brand-300">${fmtTps(n/s.step)}</td><td class="text-gray-400">${fmt(s.kvAll)} GB</td><td>${lim}</td></tr>`;
+            }).join('');
         }
 
         function setKvFromModel(active, kvKB){
@@ -610,7 +799,9 @@
         els.arch.addEventListener('change', update);
         els.usablePct.addEventListener('input',()=>{ els.presetHw.value=""; update(); });
         els.primCap.addEventListener('input',()=>{ renderCaps(+els.primCap.value); });
-        [els.primBw,els.primCap,els.ramBw,els.ramCap,els.ssdBw,els.ssdN].forEach(i=>i.addEventListener('input',()=>{ els.presetHw.value=""; update(); }));
+        [els.primBw,els.primCap,els.ramBw,els.ramCap,els.ssdBw,els.ssdN,els.gpuN,els.tflops,els.mfu].forEach(i=>i.addEventListener('input',()=>{ els.presetHw.value=""; update(); }));
+        els.split.addEventListener('change',()=>{ els.presetHw.value=""; update(); });
+        els.users.addEventListener('input', update);
 
         els.presetModel.addEventListener('change', e=>{
             const m=e.target.selectedOptions[0]?._d; if(!m) return;
@@ -622,6 +813,9 @@
             els.eff.value=h.eff;
             els.arch.value = h.unified ? 'unified' : 'discrete';
             els.primBw.value=h.primBw; els.primCap.value=h.primCap;
+            els.tflops.value = h.tflops ?? 0;
+            els.gpuN.value = h.gpus ?? 1;
+            els.split.value = h.split ?? 'tp';
             if(h.unified){ els.usablePct.value = h.usablePct ?? 75; }
             else { els.ramBw.value=h.ramBw??80; els.ramCap.value=h.ramCap??64; }
             currentCaps = h.caps || [];
@@ -633,8 +827,8 @@
         els.usecase.addEventListener('change', update);
         $('btn-apply').addEventListener('click', ()=>{
             const measured = parseFloat(els.measured.value);
-            if(!(measured>0) || lastBaseTime<=0) return;
-            const implied = measured * lastBaseTime;
+            if(!(measured>0) || lastMemBase<=0) return;
+            const implied = measured * lastMemBase;
             els.eff.value = Math.min(0.95, Math.max(0.40, implied)).toFixed(2);
             els.presetHw.value = "";
             update();
@@ -644,12 +838,13 @@
         function renderBlank(){
             $('out-speed').textContent='—';
             $('speed-flag').classList.add('hidden');
+            $('bound-flag').classList.add('hidden');
             $('use-badge').className='inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full mb-4 bg-gray-800 text-gray-400';
             $('use-icon').className='ph ph-cursor-click';
             $('use-label').textContent='Awaiting input';
             $('use-note').textContent='Select a model and hardware to estimate speed.';
             $('use-marker').style.left='0%';
-            ['out-wbytes','out-kvbytes','out-pertoken','out-effrate','out-modelsize','out-overhead'].forEach(id=>$(id).textContent='—');
+            ['out-wbytes','out-kvbytes','out-pertoken','out-effrate','out-comp','out-modelsize','out-overhead'].forEach(id=>$(id).textContent='—');
             $('out-totalvram').textContent='—'; $('out-totalvram').className='font-mono font-bold text-2xl text-gray-500 tabular';
             $('bar-prim').style.width='0%'; $('bar-ram').style.width='0%'; $('bar-ssd').style.width='0%';
             $('alloc-text').textContent='—';
@@ -659,10 +854,12 @@
             $('speed-note').textContent='Choose a model and a hardware preset (or set the sliders) to estimate decode speed.';
             $('speed-note').className='text-sm text-brand-100/90 mt-4 relative z-10 bg-black/25 p-3 rounded-lg backdrop-blur-sm';
             $('calib-out').classList.add('hidden'); $('btn-apply').disabled=true;
+            $('mu-per').textContent='—'; $('mu-agg').textContent='—'; $('mu-kv').textContent='—';
+            $('mu-bound').textContent=''; $('mu-body').innerHTML='';
             liveTps=0;
         }
 
-        // ---- live preview: stream a sample at the current predicted tok/s ----
+        // ---- live preview ----
         const SAMPLES = {
             prose: "Whether a model fits is a separate question from how fast it runs. The full set of weights has to sit in memory, but each token only reads the active ones, so a sparse mixture-of-experts model feels far quicker than its total size suggests. Once it fits, speed is set by memory bandwidth, and nothing else you change will move the number until the model starts spilling.",
             code: "def estimate_tps(active_b, bits, bandwidth_gbps, efficiency=0.8):\n    \"\"\"Rough single-stream decode speed for a local LLM.\"\"\"\n    bytes_per_token = active_b * 1e9 * (bits / 8)\n    effective = bandwidth_gbps * 1e9 * efficiency\n    return effective / bytes_per_token\n\nfor model, (active, bits) in MODELS.items():\n    tps = estimate_tps(active, bits, bandwidth_gbps=307)\n    print(f\"{model:>16}: {tps:5.1f} tok/s\")",
@@ -733,7 +930,7 @@
 
         els.params.dataset.prev = els.params.value;
         renderCaps(+els.primCap.value);
-        update();                         // renders the blank state
+        update();
 
         // preview placeholder until activated
         $('pv-out').className = 'whitespace-pre-wrap break-words font-mono text-sm leading-relaxed m-0 text-gray-500 italic';
