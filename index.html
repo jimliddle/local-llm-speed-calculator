@@ -117,7 +117,7 @@
                                 </label>
                             </div>
                         </div>
-                        <p class="text-xs text-gray-500 -mt-2">Auto-filled per model; editable. Reference (FP16): Llama 3 70B ≈ 320, 8B ≈ 128, gpt-oss-120b ≈ 72, MiniMax M2 ≈ 248, DeepSeek/Kimi (MLA) ≈ 70. Sparse/hybrid-attention models (GLM-5.x DSA, MiniMax M3 MSA, Qwen3-Next) read only part of their KV per token, so long-context predictions for them are pessimistic here.</p>
+                        <p class="text-xs text-gray-500 -mt-2">Auto-filled per model; editable. Reference (FP16): Llama 3 70B ≈ 320, 8B ≈ 128, gpt-oss-120b ≈ 72, MiniMax M2 ≈ 248, DeepSeek/Kimi (MLA) ≈ 70. Sparse/hybrid-attention models (GLM-5.x DSA, MiniMax M3 MSA, Qwen 3.5/3.6, Gemma 4 sliding-window) store and read far less KV per token than dense-attention models — their values here are estimates, and their long-context predictions are pessimistic.</p>
                     </div>
                 </div>
 
@@ -259,7 +259,12 @@
 
                 <div class="bg-gradient-to-br from-brand-600 to-blue-900 rounded-2xl p-6 shadow-2xl relative overflow-hidden border border-brand-500/30">
                     <div class="absolute -right-10 -top-10 text-white/5"><i class="ph-fill ph-lightning text-[12rem]"></i></div>
-                    <h3 class="text-brand-100 font-medium mb-1 relative z-10">Estimated decode speed <span class="text-brand-200/80 font-normal">(single stream)</span></h3>
+                    <div class="flex items-start justify-between gap-3 relative z-10">
+                        <h3 class="text-brand-100 font-medium mb-1">Estimated decode speed <span class="text-brand-200/80 font-normal">(single stream)</span></h3>
+                        <button id="btn-pdf" class="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled><i class="ph ph-file-pdf"></i> PDF report</button>
+                    </div>
+                    <p id="cfg-model" class="text-xs text-brand-100 relative z-10 font-mono truncate">—</p>
+                    <p id="cfg-hw" class="text-xs text-brand-200/90 relative z-10 font-mono truncate mb-2">—</p>
                     <div class="flex items-baseline gap-2 relative z-10 flex-wrap">
                         <span id="out-speed" class="text-6xl font-bold text-white tracking-tighter tabular">76</span>
                         <span class="text-xl text-brand-200 font-medium">tok/s</span>
@@ -411,15 +416,25 @@
                 { label:"Llama 3.3 70B (Q4_K_M)", total:70, active:70, bits:4.85, moe:false, kvKB:320 },
                 { label:"Llama 3.1 405B (Q4_K_M)", total:405, active:405, bits:4.85, moe:false, kvKB:504 },
             ]},
-            { group:"Qwen3", items:[
+            { group:"Qwen 3.5 / 3.6 (hybrid attention)", items:[
+                { label:"Qwen3.6-27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:32 },
+                { label:"Qwen3.6-35B-A3B — 35B/3B (Q4_K_M)", total:35, active:3, bits:4.85, moe:true, kvKB:16 },
+                { label:"Qwen3.5-122B-A10B — 122B/10B (Q4_K_M)", total:122, active:10, bits:4.85, moe:true, kvKB:20 },
+                { label:"Qwen3.5-397B-A17B — 397B/17B (Q4_K_M)", total:397, active:17, bits:4.85, moe:true, kvKB:28 },
+                { label:"Qwen3.5-9B dense (Q4_K_M)", total:9, active:9, bits:4.85, moe:false, kvKB:12 },
+            ]},
+            { group:"Qwen 3 (older)", items:[
                 { label:"Qwen3-Coder-480B — 480B/35B (Q4_K_M)", total:480, active:35, bits:4.85, moe:true, kvKB:null },
                 { label:"Qwen3-235B-A22B — 235B/22B (Q4_K_M)", total:235, active:22, bits:4.85, moe:true, kvKB:null },
                 { label:"Qwen3-Next-80B-A3B — 80B/3B (Q4_K_M, hybrid attn)", total:80, active:3, bits:4.85, moe:true, kvKB:16 },
                 { label:"Qwen3-30B-A3B — 30B/3B (Q4_K_M)", total:30, active:3, bits:4.85, moe:true, kvKB:null },
                 { label:"Qwen3 32B dense (Q4_K_M)", total:32, active:32, bits:4.85, moe:false, kvKB:64 },
-                { label:"Qwen2.5 72B dense (Q4_K_M)", total:72, active:72, bits:4.85, moe:false, kvKB:null },
             ]},
-            { group:"Gemma / Phi", items:[
+            { group:"Google Gemma 4 (Apr 2026) / Gemma 3 / Phi", items:[
+                { label:"Gemma 4 31B dense (Q4_K_M)", total:31, active:31, bits:4.85, moe:false, kvKB:40 },
+                { label:"Gemma 4 26B A4B — 26B/3.8B MoE (Q4_K_M)", total:26, active:3.8, bits:4.85, moe:true, kvKB:32 },
+                { label:"Gemma 4 12B Unified dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:32 },
+                { label:"Gemma 4 E4B — ≈4.5B effective, PLE (Q4_K_M)", total:4.5, active:4.5, bits:4.85, moe:false, kvKB:16 },
                 { label:"Gemma 3 27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:null },
                 { label:"Phi-4 14B dense (Q4_K_M)", total:14, active:14, bits:4.85, moe:false, kvKB:null },
             ]},
@@ -447,8 +462,15 @@
                 { label:"Mac Studio M2 Max — 400 GB/s", primBw:400, primCap:64, unified:true, eff:0.82, caps:[32,64,96], usablePct:75, tflops:13 },
                 { label:"Mac Studio M5 Ultra (rumored, late 2026) — ~1100 GB/s", primBw:1100, primCap:256, unified:true, eff:0.82, caps:[96,256,512], usablePct:75, tflops:100 },
             ]},
+            { group:"MacBook Air (unified, fanless — sustained loads may throttle)", items:[
+                { label:"MacBook Air M5 (2026) — 153 GB/s", primBw:153, primCap:16, unified:true, eff:0.75, caps:[16,24,32], usablePct:70, tflops:10 },
+                { label:"MacBook Air M4 — 120 GB/s", primBw:120, primCap:16, unified:true, eff:0.75, caps:[16,24,32], usablePct:70, tflops:4.5 },
+                { label:"MacBook Air M3 — 102 GB/s", primBw:102, primCap:16, unified:true, eff:0.75, caps:[8,16,24], usablePct:70, tflops:4 },
+                { label:"MacBook Air M2 — 100 GB/s", primBw:100, primCap:16, unified:true, eff:0.75, caps:[8,16,24], usablePct:70, tflops:3.5 },
+            ]},
             { group:"Apple Silicon laptops / mini (unified)", items:[
                 { label:"Apple M5 Max — 614 GB/s", primBw:614, primCap:128, unified:true, eff:0.82, caps:[36,48,64,128], usablePct:75, tflops:50 },
+                { label:"Apple M5 Max (binned, 32-core GPU) — 460 GB/s", primBw:460, primCap:48, unified:true, eff:0.82, caps:[36,48,64], usablePct:75, tflops:40 },
                 { label:"Apple M5 Pro — 307 GB/s", primBw:307, primCap:64, unified:true, eff:0.82, caps:[24,36,48,64], usablePct:75, tflops:25 },
                 { label:"Apple M5 — 153 GB/s", primBw:153, primCap:32, unified:true, eff:0.82, caps:[16,24,32], usablePct:75, tflops:12 },
                 { label:"Apple M4 Max — 546 GB/s", primBw:546, primCap:128, unified:true, eff:0.80, caps:[36,48,64,128], usablePct:75, tflops:18 },
@@ -528,6 +550,7 @@
         function tierIndex(tps, uc){ const e=USECASES[uc].edges; let i=0; while(i<e.length && tps>=e[i]) i++; return i; }
 
         let kvOverridden = false;
+        let report = null;      // snapshot of the current configuration + results for the PDF export
         let lastMemBase = 0;    // per-token memory read time at 100% efficiency (s), batch 1
         let liveTps = 0;
         let pvReady = false;
@@ -767,16 +790,50 @@
 
             const rows = [1,2,4,8,16,32,64];
             if(!rows.includes(B)) { rows.push(B); rows.sort((a,b)=>a-b); }
-            $('mu-body').innerHTML = rows.map(n=>{
+            const muData = rows.map(n=>{
                 const s = stepModel(n, P);
-                const sel = n===B ? ' class="sel"' : '';
-                if(!s) return `<tr${sel}><td>${n}</td><td class="text-red-400" colspan="2">KV won't fit</td><td>${fmt(n*kvTotalGB)} GB</td><td class="text-red-400">memory</td></tr>`;
-                const lim = s.spillSSD ? '<span class="text-red-400">SSD spill</span>'
-                    : s.spillRAM ? '<span class="text-amber-400">RAM spill</span>'
-                    : s.bound==='compute' ? '<span class="text-purple-300">compute</span>'
+                if(!s) return { n, per:'—', agg:'—', kv:fmt(n*kvTotalGB), limit:"KV won't fit", fail:true };
+                const limit = s.spillSSD ? 'SSD spill' : s.spillRAM ? 'RAM spill' : s.bound==='compute' ? 'compute' : 'bandwidth';
+                return { n, per:fmtTps(1/s.step), agg:fmtTps(n/s.step), kv:fmt(s.kvAll), limit, fail:false,
+                         spillSSD:s.spillSSD, spillRAM:s.spillRAM, bound:s.bound };
+            });
+            $('mu-body').innerHTML = muData.map(r=>{
+                const sel = r.n===B ? ' class="sel"' : '';
+                if(r.fail) return `<tr${sel}><td>${r.n}</td><td class="text-red-400" colspan="2">KV won't fit</td><td>${r.kv} GB</td><td class="text-red-400">memory</td></tr>`;
+                const lim = r.spillSSD ? '<span class="text-red-400">SSD spill</span>'
+                    : r.spillRAM ? '<span class="text-amber-400">RAM spill</span>'
+                    : r.bound==='compute' ? '<span class="text-purple-300">compute</span>'
                     : '<span class="text-brand-400">bandwidth</span>';
-                return `<tr${sel}><td>${n}</td><td>${fmtTps(1/s.step)}</td><td class="text-brand-300">${fmtTps(n/s.step)}</td><td class="text-gray-400">${fmt(s.kvAll)} GB</td><td>${lim}</td></tr>`;
+                return `<tr${sel}><td>${r.n}</td><td>${r.per}</td><td class="text-brand-300">${r.agg}</td><td class="text-gray-400">${r.kv} GB</td><td>${lim}</td></tr>`;
             }).join('');
+
+            // ---- hero config summary + report data ----
+            const modelLabel = els.presetModel.value ? els.presetModel.selectedOptions[0].textContent.split(' — ')[0] : 'Custom model';
+            const hwLabel = els.presetHw.value ? els.presetHw.selectedOptions[0].textContent.split(' — ')[0] : 'Custom hardware';
+            const rawBw = Math.max(1,+els.primBw.value);
+            const rawTflops = Math.max(0,+els.tflops.value);
+            const modelSpec = `${total>=100?total.toFixed(0):total.toFixed(1)}B total / ${active}B active @ ${bits} bit · ${ctxK}k ctx`;
+            const hwSpec = unified
+                ? `${fmt(totalCapRaw)} GB unified @ ${rawBw} GB/s (${Math.round(eff*100)}% eff, ${fmt(primCap)} GB usable)`
+                : (gpuN>1
+                    ? `${gpuN}× ${fmt(+els.primCap.value)} GB VRAM = ${fmt(totalCapRaw)} GB (${tpMode?'tensor parallel':'layer split'}) @ ${rawBw} GB/s each, ${Math.round(eff*100)}% eff`
+                    : `${fmt(+els.primCap.value)} GB VRAM @ ${rawBw} GB/s (${Math.round(eff*100)}% eff)`);
+            $('cfg-model').textContent = `${modelLabel} · ${modelSpec}`;
+            $('cfg-hw').textContent = `${hwLabel} · ${hwSpec}`;
+            $('btn-pdf').disabled = false;
+
+            report = {
+                modelLabel, modelSpec, hwLabel, hwSpec,
+                arch: unified ? 'Unified memory' : 'Discrete GPU', gpuN,
+                split: tpMode ? 'tensor parallel' : 'layer split',
+                tflops: rawTflops, mfu, eff, ctxK,
+                kvKB: Math.max(1,+els.kvkb.value), kvPrec: +els.kvprec.value===2 ? 'FP16' : 'Q8',
+                tps, bound: s1 ? s1.bound : null, infeasible: infeasible1,
+                activeW, kvTotalGB, perTokenGB, W, totalMem, primCap,
+                fitText: $('out-fit').textContent,
+                usecase: els.usecase.selectedOptions[0].textContent, useLabel: tier.label, useNote: $('use-note').textContent,
+                mu: muData, users: B,
+            };
         }
 
         function setKvFromModel(active, kvKB){
@@ -834,6 +891,94 @@
             update();
         });
 
+        // ---- PDF report ----
+        function loadJsPDF(){
+            return new Promise((res, rej)=>{
+                if(window.jspdf && window.jspdf.jsPDF) return res(window.jspdf.jsPDF);
+                const s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+                s.onload = ()=> (window.jspdf && window.jspdf.jsPDF) ? res(window.jspdf.jsPDF) : rej(new Error('jsPDF missing'));
+                s.onerror = ()=> rej(new Error('jsPDF load failed'));
+                document.head.appendChild(s);
+            });
+        }
+        function buildPdf(jsPDF){
+            const r = report;
+            const doc = new jsPDF({ unit:'mm', format:'a4' });
+            const M = 15, TW = 210 - 2*M; let y = M;
+            const line = (txt, size=10, style='normal', color=[30,41,59], dy=5.2)=>{
+                doc.setFont('helvetica', style); doc.setFontSize(size); doc.setTextColor(color[0],color[1],color[2]);
+                const ls = doc.splitTextToSize(txt, TW);
+                for(const l of ls){ if(y > 282){ doc.addPage(); y = M; } doc.text(l, M, y); y += dy; }
+            };
+            const gap = (n=3)=>{ y += n; };
+            const rule = ()=>{ doc.setDrawColor(203,213,225); doc.line(M, y, 210-M, y); y += 5; };
+
+            line('Local LLM Speed Report', 18, 'bold', [15,23,42], 8);
+            line(new Date().toLocaleString(), 9, 'normal', [100,116,139]);
+            gap(2); rule();
+
+            line('Model', 12, 'bold');
+            line(r.modelLabel, 10, 'bold');
+            line(r.modelSpec);
+            line(`KV cache: ${r.kvKB} KB/token (FP16 basis), stored as ${r.kvPrec} — ${r.kvTotalGB.toFixed(2)} GB at ${r.ctxK}k context per user`);
+            gap();
+            line('Hardware', 12, 'bold');
+            line(r.hwLabel, 10, 'bold');
+            line(r.hwSpec);
+            line(`Architecture: ${r.arch}${r.gpuN>1 ? ` · ${r.gpuN} GPUs, ${r.split}` : ''} · FP16 compute ${r.tflops} TFLOPS/device @ ${Math.round(r.mfu*100)}% utilization`);
+            gap(); rule();
+
+            line('Single-stream result', 12, 'bold');
+            if(r.infeasible){
+                line('KV cache alone does not fit in primary memory at this context length.', 10, 'bold', [185,28,28]);
+            } else {
+                line(`${r.tps>=100 ? r.tps.toFixed(0) : r.tps.toFixed(1)} tokens/second (${r.bound}-bound)`, 14, 'bold', [29,78,216], 7);
+                line(`Per token: ${r.activeW.toFixed(2)} GB active weights + ${r.kvTotalGB.toFixed(2)} GB KV = ${r.perTokenGB.toFixed(2)} GB read`);
+                line(`Memory: ${r.W.toFixed(1)} GB weights · ${r.totalMem.toFixed(1)} GB total vs ${r.primCap.toFixed(1)} GB usable primary memory`);
+                line(`Fit: ${r.fitText}`);
+                line(`Usability (${r.usecase}): ${r.useLabel} — ${r.useNote}`);
+            }
+            gap(); rule();
+
+            line('Multi-user serving (continuous batching)', 12, 'bold');
+            const cols = [M, M+22, M+58, M+96, M+132];
+            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(51,65,85);
+            if(y > 275){ doc.addPage(); y = M; }
+            ['Users','tok/s per user','Aggregate tok/s','KV total (GB)','Limit'].forEach((h,i)=>doc.text(h, cols[i], y)); y += 5;
+            doc.setFont('helvetica','normal'); doc.setTextColor(30,41,59);
+            for(const row of r.mu){
+                if(y > 282){ doc.addPage(); y = M; }
+                const mark = row.n===r.users ? ' *' : '';
+                doc.text(String(row.n)+mark, cols[0], y);
+                doc.text(String(row.per), cols[1], y);
+                doc.text(String(row.agg), cols[2], y);
+                doc.text(String(row.kv), cols[3], y);
+                doc.text(String(row.limit), cols[4], y);
+                y += 5;
+            }
+            line('* currently selected user count', 8, 'italic', [100,116,139], 4.5);
+            gap(); rule();
+
+            line('Assumptions & limits', 11, 'bold');
+            line('Roofline model: step time = max(memory time, compute time). Memory per step = (active parameters × bits/8 + users × KV) ÷ effective bandwidth; compute per step = users × 2 × active parameters ÷ (TFLOPS × utilization). KV is read in full per user per token and pinned to primary memory; weights fill primary memory, then spill to system RAM, then SSD, each read at its own bandwidth. Multi-GPU tensor parallel scales bandwidth and compute at ~85%; layer split adds only capacity for a single stream. The model ignores prefill, attention FLOPs, dequantization and scheduler overhead — treat every figure as an optimistic ceiling (real stacks typically reach 60–90% of it). Sparse and hybrid-attention models (GLM-5.x, MiniMax M3, Qwen 3.5/3.6, Gemma 4) read less KV per token than modeled, so their long-context figures are pessimistic. Apple and AMD TFLOPS defaults are estimates.', 8.5, 'normal', [100,116,139], 4.2);
+            gap();
+            line('Generated by the Local LLM Speed Calculator — pract.ai', 8, 'italic', [148,163,184]);
+            doc.save('llm-speed-report.pdf');
+        }
+        $('btn-pdf').addEventListener('click', async ()=>{
+            if(!report) return;
+            const btn = $('btn-pdf'), old = btn.innerHTML;
+            btn.innerHTML = '<i class="ph ph-circle-notch"></i> Building…'; btn.disabled = true;
+            try {
+                const jsPDF = await loadJsPDF();
+                buildPdf(jsPDF);
+            } catch(e) {
+                window.print();   // offline fallback: the browser's own Save-as-PDF
+            }
+            btn.innerHTML = old; btn.disabled = false;
+        });
+
         // ---- blank / nil state until the user engages ----
         function renderBlank(){
             $('out-speed').textContent='—';
@@ -856,6 +1001,8 @@
             $('calib-out').classList.add('hidden'); $('btn-apply').disabled=true;
             $('mu-per').textContent='—'; $('mu-agg').textContent='—'; $('mu-kv').textContent='—';
             $('mu-bound').textContent=''; $('mu-body').innerHTML='';
+            $('cfg-model').textContent='—'; $('cfg-hw').textContent='—';
+            $('btn-pdf').disabled = true; report = null;
             liveTps=0;
         }
 
