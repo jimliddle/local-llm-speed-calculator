@@ -1,6 +1,6 @@
 # Local LLM Speed Calculator
 
-Estimate single-stream decode speed (tokens/sec), multi-user serving throughput, and memory fit for running large language models locally - built from a memory-bandwidth and compute roofline, with Mixture-of-Experts handling, KV cache in the per-token read, and a tiered memory spill model.
+Estimate single-stream decode speed (tokens/sec), multi-user serving throughput, and memory fit for running large language models locally, built from a memory-bandwidth and compute roofline, with Mixture-of-Experts handling, KV cache in the per-token read, and a tiered memory spill model.
 
 It is a single self-contained HTML file: https://jimliddle.github.io/local-llm-speed-calculator/
 
