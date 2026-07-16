@@ -252,6 +252,92 @@
                     </div>
                     <p class="text-xs text-gray-500 mt-3">Per-user speed falls as users share bandwidth for KV reads; aggregate rises until the compute roofline or memory capacity bites. "Spill" rows still run, slowly, from system RAM; "KV won't fit" rows can't be served at this context length.</p>
                 </div>
+
+                <!-- Agents -->
+                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+                    <h2 class="text-xl font-semibold flex items-center gap-2 mb-4"><i class="ph ph-robot text-brand-500"></i> Local agents</h2>
+
+                    <div id="ag-tier-badge" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border mb-3 bg-gray-700 text-gray-300 border-gray-600">
+                        <i id="ag-tier-icon" class="ph ph-question"></i><span id="ag-tier-label">Agent suitability unrated</span>
+                    </div>
+                    <p id="ag-tier-note" class="text-xs text-gray-400 mb-4">Pick a model to see whether it's suited to agent use.</p>
+                    <p class="text-xs text-gray-500 mb-4">An agent task is many LLM calls in a loop — plan, call a tool, read the result, decide again. Each call re-processes a large, growing context (system prompt, tool definitions, history) to emit a short step, so agents lean on <strong class="text-gray-300">prefill</strong> (processing input, compute-bound) as much as decode. This models the average cost of a task and the machine's steady-state agent capacity. It's a planning estimate, not a latency guarantee: real agentic serving is bursty and end-to-end latency is genuinely unpredictable.</p>
+
+                    <div class="mb-4">
+                        <label class="text-sm font-medium text-gray-300 block mb-2">Agent workload shape</label>
+                        <select id="select-agent-shape" class="num">
+                            <option value="coding">Coding agent — long code outputs (decode-leaning)</option>
+                            <option value="tool" selected>Tool / reasoning agent — big context, short steps (prefill-heavy)</option>
+                            <option value="rag">RAG / retrieval agent — large docs in, short answers (prefill-heavy)</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1">Input tokens / call (prefill)</label>
+                            <input type="number" id="in-agent-in" class="num" value="16000" min="0" step="500">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1">Output tokens / call (decode)</label>
+                            <input type="number" id="in-agent-out" class="num" value="300" min="1" step="50">
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-500 -mt-2 mb-4">Prefill re-runs each call. Prefix caching (vLLM, SGLang) can skip the unchanged prefix — set the cached fraction below to model it.</p>
+
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <label class="text-xs text-gray-400">LLM calls / task</label>
+                                <span id="val-agent-calls" class="text-xs font-mono text-brand-400 tabular">12</span>
+                            </div>
+                            <input type="range" id="slider-agent-calls" min="1" max="80" step="1" value="12" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <label class="text-xs text-gray-400">Prefix cache hit</label>
+                                <span id="val-agent-cache" class="text-xs font-mono text-brand-400 tabular">50%</span>
+                            </div>
+                            <input type="range" id="slider-agent-cache" min="0" max="95" step="5" value="50" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between mb-2">
+                        <label class="text-sm font-medium text-gray-300">Concurrent agents</label>
+                        <span id="val-agents" class="text-sm font-mono bg-gray-800 px-2 py-0.5 rounded text-brand-400 tabular">1</span>
+                    </div>
+                    <input type="range" id="slider-agents" min="1" max="32" step="1" value="1" class="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer">
+
+                    <div class="grid grid-cols-2 gap-3 mt-5 text-center">
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="ag-ttft" class="text-2xl font-bold text-white tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">time to first token / call</div>
+                        </div>
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="ag-call" class="text-2xl font-bold text-gray-200 tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">per call (prefill + decode)</div>
+                        </div>
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="ag-task" class="text-2xl font-bold text-brand-400 tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">per task (1 agent)</div>
+                        </div>
+                        <div class="bg-gray-800/60 rounded-xl p-3">
+                            <div id="ag-tph" class="text-2xl font-bold text-brand-400 tabular">—</div>
+                            <div class="text-xs text-gray-400 mt-1">tasks/hour (all agents)</div>
+                        </div>
+                    </div>
+                    <p id="ag-bound" class="text-xs text-gray-400 mt-3"></p>
+
+                    <div class="mt-5 overflow-x-auto">
+                        <table class="w-full text-sm text-left font-mono tabular">
+                            <thead class="text-xs text-gray-400 border-b border-gray-800">
+                                <tr><th>Agents</th><th>Task time</th><th>Tasks/hr</th><th>KV total</th><th>Limit</th></tr>
+                            </thead>
+                            <tbody id="ag-body" class="text-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-3">Prefill cost includes attention's O(context²) term, which dominates past ~32k tokens — the reason long-context agents feel slow to start. Concurrent agents share the same weight reads per step but each carries its own growing KV cache, so throughput climbs until compute (prefill) or memory saturates.</p>
+                </div>
             </div>
 
             <!-- Right: Results -->
@@ -395,58 +481,58 @@
         // ---- Models: total, active, bits, moe, kvKB (FP16 KB/token; null → power-law estimate) ----
         const MODELS = [
             { group:"OpenAI gpt-oss (MoE, MXFP4)", items:[
-                { label:"gpt-oss-120b — 117B/5.1B (MXFP4)", total:116.8, active:5.1, bits:4.25, moe:true, kvKB:72 },
-                { label:"gpt-oss-20b — 20.9B/3.6B (MXFP4)", total:20.9, active:3.6, bits:4.25, moe:true, kvKB:48 },
+                { label:"gpt-oss-120b — 117B/5.1B (MXFP4)", total:116.8, active:5.1, bits:4.25, moe:true, kvKB:72 , agent:"strong" },
+                { label:"gpt-oss-20b — 20.9B/3.6B (MXFP4)", total:20.9, active:3.6, bits:4.25, moe:true, kvKB:48 , agent:"capable" },
             ]},
             { group:"Frontier open-weight MoE (2026)", items:[
-                { label:"GLM-5.2 — 744B/40B (Q4_K_M)", total:744, active:40, bits:4.85, moe:true, kvKB:48 },
-                { label:"GLM-5.2 — 744B/40B (2-bit Unsloth ≈239 GB)", total:744, active:40, bits:2.6, moe:true, kvKB:48 },
-                { label:"MiniMax M3 — 428B/23B (Q4_K_M)", total:428, active:23, bits:4.85, moe:true, kvKB:null },
-                { label:"MiniMax M2 / M2.1 / M2.5 / M2.7 — 230B/10B (Q4_K_M)", total:229.9, active:9.8, bits:4.85, moe:true, kvKB:248 },
-                { label:"Kimi K2 / K2 Thinking — 1026B/32B (native INT4)", total:1026, active:32, bits:4.25, moe:true, kvKB:70 },
-                { label:"GLM-4.6 — 357B/32B (Q4_K_M)", total:357, active:32, bits:4.85, moe:true, kvKB:null },
-                { label:"GLM-4.5-Air — 106B/12B (Q4_K_M)", total:106, active:12, bits:4.85, moe:true, kvKB:null },
+                { label:"GLM-5.2 — 744B/40B (Q4_K_M)", total:744, active:40, bits:4.85, moe:true, kvKB:48 , agent:"strong" },
+                { label:"GLM-5.2 — 744B/40B (2-bit Unsloth ≈239 GB)", total:744, active:40, bits:2.6, moe:true, kvKB:48 , agent:"strong" },
+                { label:"MiniMax M3 — 428B/23B (Q4_K_M)", total:428, active:23, bits:4.85, moe:true, kvKB:null , agent:"strong" },
+                { label:"MiniMax M2 / M2.1 / M2.5 / M2.7 — 230B/10B (Q4_K_M)", total:229.9, active:9.8, bits:4.85, moe:true, kvKB:248 , agent:"strong" },
+                { label:"Kimi K2 / K2 Thinking — 1026B/32B (native INT4)", total:1026, active:32, bits:4.25, moe:true, kvKB:70 , agent:"strong" },
+                { label:"GLM-4.6 — 357B/32B (Q4_K_M)", total:357, active:32, bits:4.85, moe:true, kvKB:null , agent:"strong" },
+                { label:"GLM-4.5-Air — 106B/12B (Q4_K_M)", total:106, active:12, bits:4.85, moe:true, kvKB:null , agent:"capable" },
             ]},
             { group:"Meta Llama 4 (MoE)", items:[
-                { label:"Llama 4 Scout — 109B/17B (Q4_K_M)", total:109, active:17, bits:4.85, moe:true, kvKB:null },
-                { label:"Llama 4 Maverick — 400B/17B (Q4_K_M)", total:400, active:17, bits:4.85, moe:true, kvKB:null },
+                { label:"Llama 4 Scout — 109B/17B (Q4_K_M)", total:109, active:17, bits:4.85, moe:true, kvKB:null , agent:"capable" },
+                { label:"Llama 4 Maverick — 400B/17B (Q4_K_M)", total:400, active:17, bits:4.85, moe:true, kvKB:null , agent:"capable" },
             ]},
             { group:"Meta Llama 3 (Dense)", items:[
-                { label:"Llama 3.1 8B (Q4_K_M)", total:8, active:8, bits:4.85, moe:false, kvKB:128 },
-                { label:"Llama 3.3 70B (Q4_K_M)", total:70, active:70, bits:4.85, moe:false, kvKB:320 },
-                { label:"Llama 3.1 405B (Q4_K_M)", total:405, active:405, bits:4.85, moe:false, kvKB:504 },
+                { label:"Llama 3.1 8B (Q4_K_M)", total:8, active:8, bits:4.85, moe:false, kvKB:128 , agent:"limited" },
+                { label:"Llama 3.3 70B (Q4_K_M)", total:70, active:70, bits:4.85, moe:false, kvKB:320 , agent:"capable" },
+                { label:"Llama 3.1 405B (Q4_K_M)", total:405, active:405, bits:4.85, moe:false, kvKB:504 , agent:"capable" },
             ]},
             { group:"Qwen 3.5 / 3.6 (hybrid attention)", items:[
-                { label:"Qwen3.6-27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:32 },
-                { label:"Qwen3.6-35B-A3B — 35B/3B (Q4_K_M)", total:35, active:3, bits:4.85, moe:true, kvKB:16 },
-                { label:"Qwen3.5-122B-A10B — 122B/10B (Q4_K_M)", total:122, active:10, bits:4.85, moe:true, kvKB:20 },
-                { label:"Qwen3.5-397B-A17B — 397B/17B (Q4_K_M)", total:397, active:17, bits:4.85, moe:true, kvKB:28 },
-                { label:"Qwen3.5-9B dense (Q4_K_M)", total:9, active:9, bits:4.85, moe:false, kvKB:12 },
+                { label:"Qwen3.6-27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:32 , agent:"strong" },
+                { label:"Qwen3.6-35B-A3B — 35B/3B (Q4_K_M)", total:35, active:3, bits:4.85, moe:true, kvKB:16 , agent:"strong" },
+                { label:"Qwen3.5-122B-A10B — 122B/10B (Q4_K_M)", total:122, active:10, bits:4.85, moe:true, kvKB:20 , agent:"capable" },
+                { label:"Qwen3.5-397B-A17B — 397B/17B (Q4_K_M)", total:397, active:17, bits:4.85, moe:true, kvKB:28 , agent:"strong" },
+                { label:"Qwen3.5-9B dense (Q4_K_M)", total:9, active:9, bits:4.85, moe:false, kvKB:12 , agent:"limited" },
             ]},
             { group:"Qwen 3 (older)", items:[
-                { label:"Qwen3-Coder-480B — 480B/35B (Q4_K_M)", total:480, active:35, bits:4.85, moe:true, kvKB:null },
-                { label:"Qwen3-235B-A22B — 235B/22B (Q4_K_M)", total:235, active:22, bits:4.85, moe:true, kvKB:null },
-                { label:"Qwen3-Next-80B-A3B — 80B/3B (Q4_K_M, hybrid attn)", total:80, active:3, bits:4.85, moe:true, kvKB:16 },
-                { label:"Qwen3-30B-A3B — 30B/3B (Q4_K_M)", total:30, active:3, bits:4.85, moe:true, kvKB:null },
-                { label:"Qwen3 32B dense (Q4_K_M)", total:32, active:32, bits:4.85, moe:false, kvKB:64 },
+                { label:"Qwen3-Coder-480B — 480B/35B (Q4_K_M)", total:480, active:35, bits:4.85, moe:true, kvKB:null , agent:"strong" },
+                { label:"Qwen3-235B-A22B — 235B/22B (Q4_K_M)", total:235, active:22, bits:4.85, moe:true, kvKB:null , agent:"capable" },
+                { label:"Qwen3-Next-80B-A3B — 80B/3B (Q4_K_M, hybrid attn)", total:80, active:3, bits:4.85, moe:true, kvKB:16 , agent:"capable" },
+                { label:"Qwen3-30B-A3B — 30B/3B (Q4_K_M)", total:30, active:3, bits:4.85, moe:true, kvKB:null , agent:"capable" },
+                { label:"Qwen3 32B dense (Q4_K_M)", total:32, active:32, bits:4.85, moe:false, kvKB:64 , agent:"capable" },
             ]},
             { group:"Google Gemma 4 (Apr 2026) / Gemma 3 / Phi", items:[
-                { label:"Gemma 4 31B dense (Q4_K_M)", total:31, active:31, bits:4.85, moe:false, kvKB:40 },
-                { label:"Gemma 4 26B A4B — 26B/3.8B MoE (Q4_K_M)", total:26, active:3.8, bits:4.85, moe:true, kvKB:32 },
-                { label:"Gemma 4 12B Unified dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:32 },
-                { label:"Gemma 4 E4B — ≈4.5B effective, PLE (Q4_K_M)", total:4.5, active:4.5, bits:4.85, moe:false, kvKB:16 },
-                { label:"Gemma 3 27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:null },
-                { label:"Phi-4 14B dense (Q4_K_M)", total:14, active:14, bits:4.85, moe:false, kvKB:null },
+                { label:"Gemma 4 31B dense (Q4_K_M)", total:31, active:31, bits:4.85, moe:false, kvKB:40 , agent:"capable" },
+                { label:"Gemma 4 26B A4B — 26B/3.8B MoE (Q4_K_M)", total:26, active:3.8, bits:4.85, moe:true, kvKB:32 , agent:"capable" },
+                { label:"Gemma 4 12B Unified dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:32 , agent:"limited" },
+                { label:"Gemma 4 E4B — ≈4.5B effective, PLE (Q4_K_M)", total:4.5, active:4.5, bits:4.85, moe:false, kvKB:16 , agent:"weak" },
+                { label:"Gemma 3 27B dense (Q4_K_M)", total:27, active:27, bits:4.85, moe:false, kvKB:null , agent:"limited" },
+                { label:"Phi-4 14B dense (Q4_K_M)", total:14, active:14, bits:4.85, moe:false, kvKB:null , agent:"limited" },
             ]},
             { group:"DeepSeek / Mistral (MoE)", items:[
-                { label:"DeepSeek V3 / V3.2 / R1 — 671B/37B (Q4_K_M, MLA)", total:671, active:37, bits:4.85, moe:true, kvKB:70 },
-                { label:"Mixtral 8x7B — 47B/13B (Q4_K_M)", total:47, active:13, bits:4.85, moe:true, kvKB:128 },
-                { label:"Mixtral 8x22B — 141B/39B (Q4_K_M)", total:141, active:39, bits:4.85, moe:true, kvKB:null },
-                { label:"Mistral NeMo 12B dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:null },
+                { label:"DeepSeek V3 / V3.2 / R1 — 671B/37B (Q4_K_M, MLA)", total:671, active:37, bits:4.85, moe:true, kvKB:70 , agent:"strong" },
+                { label:"Mixtral 8x7B — 47B/13B (Q4_K_M)", total:47, active:13, bits:4.85, moe:true, kvKB:128 , agent:"limited" },
+                { label:"Mixtral 8x22B — 141B/39B (Q4_K_M)", total:141, active:39, bits:4.85, moe:true, kvKB:null , agent:"capable" },
+                { label:"Mistral NeMo 12B dense (Q4_K_M)", total:12, active:12, bits:4.85, moe:false, kvKB:null , agent:"limited" },
             ]},
             { group:"Full precision (FP16)", items:[
-                { label:"gpt-oss-120b — 117B/5.1B (FP16)", total:116.8, active:5.1, bits:16, moe:true, kvKB:72 },
-                { label:"Llama 3.1 8B (FP16)", total:8, active:8, bits:16, moe:false, kvKB:128 },
+                { label:"gpt-oss-120b — 117B/5.1B (FP16)", total:116.8, active:5.1, bits:16, moe:true, kvKB:72 , agent:"strong" },
+                { label:"Llama 3.1 8B (FP16)", total:8, active:8, bits:16, moe:false, kvKB:128 , agent:"limited" },
             ]},
         ];
 
@@ -522,7 +608,32 @@
             presetModel:$('preset-model'), presetHw:$('preset-hw'),
             measured:$('in-measured'), usecase:$('select-usecase'),
             users:$('slider-users'),
+            agentShape:$('select-agent-shape'), agentIn:$('in-agent-in'), agentOut:$('in-agent-out'),
+            agentCalls:$('slider-agent-calls'), agentCache:$('slider-agent-cache'), agents:$('slider-agents'),
         };
+
+        // Prefill time for a single call processing `inTok` prompt tokens at batch B_pf,
+        // including attention's O(context^2) term. Compute-bound; returns seconds.
+        // n_layers and d_model estimated from active param count via standard transformer scaling.
+        function prefillTime(inTok, B, p){
+            if(p.tflops<=0 || inTok<=0) return 0;
+            const flopsPerSec = p.tflops * 1e12 * p.mfu;
+            // weight matmul FLOPs: 2 * tokens * active_params (per sequence), × B sequences
+            const wf = 2 * inTok * (p.active*1e9);
+            // attention FLOPs ≈ 4 · L · seq² · d_model  (QK^T and attn·V), × B
+            const est = estArch(p.active);
+            const af = 4 * est.L * inTok*inTok * est.d;
+            return B * (wf + af) / flopsPerSec;
+        }
+        // Rough transformer geometry from active-parameter count (billions).
+        function estArch(activeB){
+            // Fitted to known geometries (8B:32L/4096d, 70B:80L/8192d, 405B:126L/16384d,
+            // 17B-active:48L/5120d). Used only for the attention FLOP term, where layer
+            // count matters most (it's linear); within ~10% of real across 3–405B.
+            const L = Math.round(Math.min(126, Math.max(24, 13.3 * Math.pow(activeB, 0.42))));
+            const d = Math.round(Math.min(16384, Math.max(2048, 2158 * Math.pow(activeB, 0.32))));
+            return { L, d };
+        }
 
         let currentCaps = [48,64,96,128];
         function renderCaps(sel){
@@ -535,9 +646,32 @@
             }));
         }
 
+        // Agent-suitability tiers. This is an editorial judgment about tool-calling / multi-step
+        // reliability — a model-quality property, entirely separate from the calculated physics.
+        // The timings still compute for any model; this only advises whether they're worth trusting.
+        const AGENT_TIERS = {
+            strong:  { label:"Strong agent", cls:"bg-green-500/15 text-green-300 border-green-500/40", icon:"ph-robot",
+                       note:"Purpose-built for tool use and multi-step loops. The task timings below are realistic for this model." },
+            capable: { label:"Capable agent", cls:"bg-lime-500/15 text-lime-300 border-lime-500/40", icon:"ph-check-circle",
+                       note:"Handles tool calling and agent loops reliably with a decent harness. Timings below are trustworthy." },
+            limited: { label:"Limited for agents", cls:"bg-amber-500/15 text-amber-300 border-amber-500/40", icon:"ph-warning",
+                       note:"Can emit tool calls but tends to drift or break on long, multi-step tasks. Treat the timings as best-case — they assume the model completes the loop, which is optimistic here." },
+            weak:    { label:"Not recommended for agents", cls:"bg-red-500/15 text-red-300 border-red-500/40", icon:"ph-x-circle",
+                       note:"An edge / small model not built for autonomous tool use. The numbers compute, but in practice this model will struggle to run a reliable agent loop regardless of speed." },
+            unknown: { label:"Agent suitability unrated", cls:"bg-gray-700 text-gray-300 border-gray-600", icon:"ph-question",
+                       note:"Custom model — agent reliability depends on whether it's instruct-tuned for tool use. The timings assume it completes the loop." },
+        };
+        // Fallback tier for custom/untagged configs, inferred from size (active params).
+        function inferAgentTier(activeB){
+            if(activeB >= 20) return 'capable';
+            if(activeB >= 7)  return 'limited';
+            return 'weak';
+        }
+        let currentAgentTier = 'unknown';
+
         const USECASES = {
             chat:      { edges:[3,7,15,30],   note:"Calibrated to human reading speed (~5 tok/s). Above ~7 you stay ahead of your own reading; 15+ feels smooth." },
-            agentic:   { edges:[10,25,50,80], note:"Agentic & coding runs emit long outputs over many round-trips, so latency compounds — aim for 25+ to keep a loop responsive." },
+            agentic:   { edges:[10,25,50,80], note:"This rates raw decode speed; for real agent tasks (prefill cost, calls per task, concurrency) see the Local agents section, since prefill often matters more than tok/s." },
             reasoning: { edges:[15,30,60,100],note:"Reasoning models emit many hidden thinking tokens before answering, so you want 30+ for the wait to a final answer to stay bearable." },
         };
         const TIERS = [
@@ -807,6 +941,90 @@
                 return `<tr${sel}><td>${r.n}</td><td>${r.per}</td><td class="text-brand-300">${r.agg}</td><td class="text-gray-400">${r.kv} GB</td><td>${lim}</td></tr>`;
             }).join('');
 
+            // ---- local agents ----
+            // A task = `calls` LLM invocations. Each call prefills `inTok` (minus cached
+            // prefix) then decodes `outTok`. Decode reuses the batched roofline; prefill is
+            // compute-bound with an O(context²) attention term. Concurrency batches both.
+            const shape = els.agentShape.value;
+            const agIn = Math.max(0, +els.agentIn.value);
+            const agOut = Math.max(1, +els.agentOut.value);
+            const agCalls = Math.max(1, Math.round(+els.agentCalls.value));
+            const agCacheHit = Math.min(0.95, Math.max(0, (+els.agentCache.value)/100));
+            const nAgents = Math.max(1, Math.round(+els.agents.value));
+            $('val-agent-calls').textContent = agCalls;
+            $('val-agent-cache').textContent = `${Math.round(agCacheHit*100)}%`;
+            $('val-agents').textContent = nAgents;
+
+            // resolve agent-suitability tier: use the preset's tag, or infer from size for custom configs
+            const tierKey = els.presetModel.value ? currentAgentTier : inferAgentTier(active);
+            const tierDef = AGENT_TIERS[tierKey] || AGENT_TIERS.unknown;
+            $('ag-tier-badge').className = `inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border mb-3 ${tierDef.cls}`;
+            $('ag-tier-icon').className = `ph ${tierDef.icon}`;
+            $('ag-tier-label').textContent = tierDef.label;
+            $('ag-tier-note').textContent = tierDef.note;
+
+            // effective prefill tokens after prefix caching (only the uncached tail is recomputed)
+            const agInEff = agIn * (1 - agCacheHit);
+            // KV during an agent step reflects the agent's own context (~inTok), not the global slider.
+            const agKvGB = (Math.max(1,+els.kvkb.value) * 1024 * (+els.kvprec.value/2) / 1e9) * agIn;
+            const agP = { ...P, kvTotalGB: agKvGB };
+
+            function agentStep(nA){
+                // decode step for nA concurrent agents at their own context length
+                const dstep = stepModel(nA, agP);
+                if(!dstep) return null;
+                // prefill for one call, all nA agents prefilling together (compute-bound, batches)
+                const pf = prefillTime(agInEff, nA, agP);
+                // per call: prefill once + decode outTok tokens (each decode step yields 1 tok/agent)
+                const decodePerCall = agOut * dstep.step;
+                const perCall = pf + decodePerCall;
+                const ttft = pf + dstep.step;          // first token = prefill + one decode step
+                const perTask = agCalls * perCall;      // calls are sequential within a task
+                // nA agents run tasks in parallel, so wall-clock throughput = nA / perTask
+                const tasksPerHour = 3600 * nA / perTask;
+                const pfShare = perCall>0 ? pf/perCall : 0;
+                return { ttft, perCall, perTask, tasksPerHour, kvAll:dstep.kvAll,
+                         bound: pfShare>0.5 ? 'prefill' : (dstep.bound==='compute'?'compute':'decode'),
+                         spillSSD:dstep.spillSSD, spillRAM:dstep.spillRAM };
+            }
+            const secFmt = s => s>=3600 ? `${(s/3600).toFixed(1)}h` : s>=60 ? `${(s/60).toFixed(1)}m` : s>=1 ? `${s.toFixed(1)}s` : `${(s*1000).toFixed(0)}ms`;
+
+            const a1 = agentStep(nAgents);
+            if(a1){
+                $('ag-ttft').textContent = secFmt(a1.ttft);
+                $('ag-call').textContent = secFmt(a1.perCall);
+                $('ag-task').textContent = secFmt(a1.perTask/nAgents*1); // per-task wall time for a single agent's task
+                $('ag-tph').textContent = a1.tasksPerHour>=100 ? a1.tasksPerHour.toFixed(0) : a1.tasksPerHour.toFixed(1);
+                const bt = a1.spillSSD ? 'weights spilled to SSD — not viable'
+                    : a1.spillRAM ? 'weights partly in system RAM — every step pays the slow tier'
+                    : a1.bound==='prefill' ? `prefill-bound — most of each call is spent processing the ${fmt(agInEff/1000)}k-token context, not generating. Prefix caching and shorter context help most here`
+                    : a1.bound==='compute' ? 'compute-bound on decode — the TFLOPS ceiling caps it'
+                    : 'decode-bound — output generation dominates; this shape leans on memory bandwidth like chat does';
+                $('ag-bound').textContent = `At ${nAgents} agent${nAgents>1?'s':''}: ${bt}.`;
+            } else {
+                ['ag-ttft','ag-call','ag-task','ag-tph'].forEach(id=>$(id).textContent='—');
+                $('ag-bound').textContent = `At ${nAgents} agents the combined KV cache (${fmt(nAgents*agKvGB)} GB) exceeds primary memory — fewer agents, shorter context, or quantize KV.`;
+            }
+
+            const agRows = [1,2,4,8,16,32];
+            if(!agRows.includes(nAgents)){ agRows.push(nAgents); agRows.sort((a,b)=>a-b); }
+            const agData = agRows.map(n=>{
+                const a = agentStep(n);
+                if(!a) return { n, task:'—', tph:'—', kv:fmt(n*agKvGB), limit:"KV won't fit", fail:true };
+                return { n, task:secFmt(a.perTask), tph: a.tasksPerHour>=100?a.tasksPerHour.toFixed(0):a.tasksPerHour.toFixed(1),
+                         kv:fmt(a.kvAll), limit:a.bound, fail:false, spillSSD:a.spillSSD, spillRAM:a.spillRAM };
+            });
+            $('ag-body').innerHTML = agData.map(r=>{
+                const sel = r.n===nAgents ? ' class="sel"' : '';
+                if(r.fail) return `<tr${sel}><td>${r.n}</td><td class="text-red-400" colspan="2">KV won't fit</td><td>${r.kv} GB</td><td class="text-red-400">memory</td></tr>`;
+                const lim = r.spillSSD ? '<span class="text-red-400">SSD spill</span>'
+                    : r.spillRAM ? '<span class="text-amber-400">RAM spill</span>'
+                    : r.limit==='prefill' ? '<span class="text-purple-300">prefill</span>'
+                    : r.limit==='compute' ? '<span class="text-purple-300">compute</span>'
+                    : '<span class="text-brand-400">decode</span>';
+                return `<tr${sel}><td>${r.n}</td><td>${r.task}</td><td class="text-brand-300">${r.tph}</td><td class="text-gray-400">${r.kv} GB</td><td>${lim}</td></tr>`;
+            }).join('');
+
             // ---- hero config summary + report data ----
             const modelLabel = els.presetModel.value ? els.presetModel.selectedOptions[0].textContent.split(' — ')[0] : 'Custom model';
             const hwLabel = els.presetHw.value ? els.presetHw.selectedOptions[0].textContent.split(' — ')[0] : 'Custom hardware';
@@ -833,6 +1051,15 @@
                 fitText: $('out-fit').textContent,
                 usecase: els.usecase.selectedOptions[0].textContent, useLabel: tier.label, useNote: $('use-note').textContent,
                 mu: muData, users: B,
+                agent: {
+                    shape: els.agentShape.selectedOptions[0].textContent.split(' — ')[0],
+                    tier: tierDef.label, tierNote: tierDef.note,
+                    inTok: agIn, outTok: agOut, calls: agCalls, cacheHit: Math.round(agCacheHit*100),
+                    nAgents, ttft: a1?secFmt(a1.ttft):'—', perCall: a1?secFmt(a1.perCall):'—',
+                    perTask: a1?secFmt(a1.perTask/nAgents):'—',
+                    tph: a1?(a1.tasksPerHour>=100?a1.tasksPerHour.toFixed(0):a1.tasksPerHour.toFixed(1)):'—',
+                    bound: a1?a1.bound:null, rows: agData,
+                },
             };
         }
 
@@ -860,9 +1087,27 @@
         els.split.addEventListener('change',()=>{ els.presetHw.value=""; update(); });
         els.users.addEventListener('input', update);
 
+        // agent controls
+        const AGENT_SHAPES = {
+            coding: { in:6000, out:1200, calls:15, cache:40 },
+            tool:   { in:16000, out:300, calls:12, cache:50 },
+            rag:    { in:24000, out:400, calls:4,  cache:20 },
+        };
+        els.agentShape.addEventListener('change', ()=>{
+            const s = AGENT_SHAPES[els.agentShape.value];
+            if(s){ els.agentIn.value=s.in; els.agentOut.value=s.out; els.agentCalls.value=s.calls; els.agentCache.value=s.cache; }
+            update();
+        });
+        [els.agentIn, els.agentOut, els.agentCalls, els.agentCache, els.agents].forEach(i=>i.addEventListener('input',()=>{
+            // hand-editing the tokens switches the shape selector to Custom
+            if(i===els.agentIn||i===els.agentOut||i===els.agentCalls){ els.agentShape.value='custom'; }
+            update();
+        }));
+
         els.presetModel.addEventListener('change', e=>{
             const m=e.target.selectedOptions[0]?._d; if(!m) return;
             els.params.value=m.total; els.active.value=m.active; els.bits.value=m.bits; els.params.dataset.prev=m.total;
+            currentAgentTier = m.agent || 'unknown';
             setKvFromModel(m.active, m.kvKB); update();
         });
         els.presetHw.addEventListener('change', e=>{
@@ -960,8 +1205,34 @@
             line('* currently selected user count', 8, 'italic', [100,116,139], 4.5);
             gap(); rule();
 
+            const ag = r.agent;
+            line('Local agents', 12, 'bold');
+            line(`Agent suitability: ${ag.tier} — ${ag.tierNote}`, 9, 'italic', [100,116,139], 4.5);
+            line(`${ag.shape} · ${ag.inTok.toLocaleString()} input / ${ag.outTok} output tokens per call · ${ag.calls} calls/task · ${ag.cacheHit}% prefix cache hit`);
+            if(ag.bound){
+                line(`At ${ag.nAgents} concurrent agent${ag.nAgents>1?'s':''}: ${ag.ttft} to first token, ${ag.perCall} per call, ${ag.perTask} per task, ${ag.tph} tasks/hour total (${ag.bound}-bound)`, 10, 'bold', [29,78,216]);
+            } else {
+                line(`At ${ag.nAgents} agents the combined KV cache exceeds primary memory.`, 10, 'bold', [185,28,28]);
+            }
+            const acols = [M, M+30, M+66, M+102, M+138];
+            doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(51,65,85);
+            if(y > 275){ doc.addPage(); y = M; }
+            ['Agents','Task time','Tasks/hr','KV total','Limit'].forEach((h,i)=>doc.text(h, acols[i], y)); y += 5;
+            doc.setFont('helvetica','normal'); doc.setTextColor(30,41,59);
+            for(const row of ag.rows){
+                if(y > 282){ doc.addPage(); y = M; }
+                const mark = row.n===ag.nAgents ? ' *' : '';
+                doc.text(String(row.n)+mark, acols[0], y);
+                doc.text(String(row.task), acols[1], y);
+                doc.text(String(row.tph), acols[2], y);
+                doc.text(String(row.kv)+' GB', acols[3], y);
+                doc.text(String(row.limit), acols[4], y);
+                y += 5;
+            }
+            gap(); rule();
+
             line('Assumptions & limits', 11, 'bold');
-            line('Roofline model: step time = max(memory time, compute time). Memory per step = (active parameters × bits/8 + users × KV) ÷ effective bandwidth; compute per step = users × 2 × active parameters ÷ (TFLOPS × utilization). KV is read in full per user per token and pinned to primary memory; weights fill primary memory, then spill to system RAM, then SSD, each read at its own bandwidth. Multi-GPU tensor parallel scales bandwidth and compute at ~85%; layer split adds only capacity for a single stream. The model ignores prefill, attention FLOPs, dequantization and scheduler overhead — treat every figure as an optimistic ceiling (real stacks typically reach 60–90% of it). Sparse and hybrid-attention models (GLM-5.x, MiniMax M3, Qwen 3.5/3.6, Gemma 4) read less KV per token than modeled, so their long-context figures are pessimistic. Apple and AMD TFLOPS defaults are estimates.', 8.5, 'normal', [100,116,139], 4.2);
+            line('Roofline model: step time = max(memory time, compute time). Memory per step = (active parameters × bits/8 + users × KV) ÷ effective bandwidth; compute per step = users × 2 × active parameters ÷ (TFLOPS × utilization). KV is read in full per user per token and pinned to primary memory; weights fill primary memory, then spill to system RAM, then SSD, each read at its own bandwidth. Multi-GPU tensor parallel scales bandwidth and compute at ~85%; layer split adds only capacity for a single stream. Agent estimates add a prefill (input-processing) cost per call: compute-bound, = tokens × 2 × active params ÷ (TFLOPS × util), plus an attention term ≈ 4 × layers × context² × d_model that dominates past ~32k tokens; layer/d_model are estimated from active parameter count. Agent figures model average steady-state cost and capacity, NOT tail latency — real agentic serving is bursty and end-to-end latency is genuinely unpredictable. The model otherwise ignores dequantization and scheduler overhead — treat every figure as an optimistic ceiling (real stacks typically reach 60–90% of it). Sparse and hybrid-attention models (GLM-5.x, MiniMax M3, Qwen 3.5/3.6, Gemma 4) read less KV per token than modeled, so their long-context figures are pessimistic. Apple and AMD TFLOPS defaults are estimates.', 8.5, 'normal', [100,116,139], 4.2);
             gap();
             line('Generated by the Local LLM Speed Calculator — pract.ai', 8, 'italic', [148,163,184]);
             doc.save('llm-speed-report.pdf');
@@ -1001,6 +1272,11 @@
             $('calib-out').classList.add('hidden'); $('btn-apply').disabled=true;
             $('mu-per').textContent='—'; $('mu-agg').textContent='—'; $('mu-kv').textContent='—';
             $('mu-bound').textContent=''; $('mu-body').innerHTML='';
+            ['ag-ttft','ag-call','ag-task','ag-tph'].forEach(id=>$(id).textContent='—');
+            $('ag-bound').textContent=''; $('ag-body').innerHTML='';
+            $('ag-tier-badge').className='inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border mb-3 bg-gray-700 text-gray-300 border-gray-600';
+            $('ag-tier-icon').className='ph ph-question'; $('ag-tier-label').textContent='Agent suitability unrated';
+            $('ag-tier-note').textContent='Pick a model to see whether it\'s suited to agent use.';
             $('cfg-model').textContent='—'; $('cfg-hw').textContent='—';
             $('btn-pdf').disabled = true; report = null;
             liveTps=0;
